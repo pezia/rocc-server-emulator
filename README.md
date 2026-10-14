@@ -88,6 +88,11 @@ require no external disk image or private credentials.
 
 ## Source layout
 
+- [CPU instruction-set reference](docs/cpu-isa.md): instruction formats,
+  addressing, arithmetic, interrupts, and recovered extensions.
+- [Machine architecture](docs/machine-architecture.md): memory map, controllers,
+  terminal protocol, bootstrap assumptions, and compatibility limits.
+
 - `src/cpu.rs`, `src/memory.rs`: instructions and banked memory.
 - `src/devices.rs`: controller behavior and private disk overlay.
 - `src/terminal.rs`, `src/screen.rs`: terminal protocol and display state.

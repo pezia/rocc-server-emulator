@@ -71,7 +71,7 @@ impl Screen {
                 continue;
             }
             // Input teardown uses this exact sequence after clearing
-            // the guest's input state (F8CB..F8DD in the H/1/1 trace). Decode
+            // the guest's input state. Decode
             // the complete operation; standalone B4/B2/95 remain unresolved.
             const FIELD_COMPLETE: &[u8] = b"\xb4\xb2\xb8\xa2\x00\x95";
             if remaining.len() < FIELD_COMPLETE.len() && FIELD_COMPLETE.starts_with(remaining) {
