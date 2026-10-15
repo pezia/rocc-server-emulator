@@ -1,12 +1,17 @@
+<div class="gallery">
 {% for item in include.items %}
-<figure style="margin: 1.5rem 0;">
-  <h3>{{ item.title | escape }}</h3>
+<figure class="gallery-card">
   {% assign asset = site.static_files | where: "path", item.path | first %}
   {% if asset %}
-  <a href="{{ item.path | relative_url }}"><img src="{{ item.path | relative_url }}" alt="{{ item.alt | escape }}" loading="lazy" style="display: block; max-width: 100%; height: auto;"></a>
-  <figcaption>{{ item.caption | escape }}</figcaption>
+  <a class="gallery-image" href="{{ item.path | relative_url }}"><img src="{{ item.path | relative_url }}" alt="{{ item.alt | escape }}" loading="lazy" decoding="async"></a>
   {% else %}
-  <p style="padding: 1.5rem; border: 1px dashed #767676;">{{ item.pending | escape }}</p>
+  <div class="media-placeholder {% if include.screen %}screen-placeholder{% endif %}">
+    <span class="placeholder-index" aria-hidden="true">{% if include.screen %}CAPTURE{% else %}ARCHIVE{% endif %} / 0{{ forloop.index }}</span>
+    <span class="placeholder-mark" aria-hidden="true">{% if include.screen %}▤{% else %}+{% endif %}</span>
+    <span class="placeholder-label">{% if include.screen %}Screenshot{% else %}Photograph{% endif %} forthcoming</span>
+  </div>
   {% endif %}
+  <figcaption><span class="caption-number">0{{ forloop.index }}</span><div><h3>{{ item.title | escape }}</h3><p>{% if asset %}{{ item.caption | escape }}{% else %}{{ item.pending | escape }}{% endif %}</p></div></figcaption>
 </figure>
 {% endfor %}
+</div>
