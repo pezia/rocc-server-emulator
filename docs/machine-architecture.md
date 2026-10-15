@@ -165,11 +165,53 @@ Separate startup control:
 
 Preservation/model boundary:
 Disk contents are loaded read-only. Guest writes replace 256-byte blocks in a
-private in-memory overlay; reads prefer overlay blocks. The JSON report can retain
-the overlay but the emulator does not rewrite the image or persist a virtual disk
-between launches. Successful transfers return status 0 immediately [MODEL].
+separate overlay; reads prefer overlay blocks. CLI runs persist these blocks
+between launches as described below. The JSON report also includes changed
+blocks. The original image is never rewritten. Successful transfers return
+status 0 after the overlay write is flushed [MODEL].
 Actual busy timing, error flags, retry behavior, multiple units, physical DMA
 arbitration and reset effects beyond the implemented device are OPEN.
+
+### Persistent disk overlays
+
+By default, the CLI appends `.overlay` to the image path: `disk.img` uses
+`disk.img.overlay`. `--overlay PATH` overrides that name. Existing overlays are
+loaded before the bootstrap block is copied into RAM, so saved changes to the
+boot sector also take effect. The base image's SHA-256 in reports and
+`--expected-sha256` always refer to the original image, excluding overlay data.
+Reports include the resolved `overlay_path`.
+
+The overlay must be a separate regular file. Final-component symlinks and
+hard-link aliases of the original image are rejected. Newly created overlays
+have mode `0600` (subject to the process umask), and an exclusive advisory lock
+prevents cooperating emulator processes from sharing an overlay concurrently.
+The overlay must be writable, including for sessions that do not issue disk
+writes. Library users constructing `Machine::new` retain an in-memory disk until
+they call `attach_overlay` before executing instructions.
+
+Version 1 is an append-only binary journal, with all integers big endian:
+
+| Part | Layout |
+| --- | --- |
+| Header (48 bytes) | ASCII `ROCCOVL1` (8), original image byte length (8), original image SHA-256 (32 raw bytes). |
+| Write record (296 bytes) | Image byte offset (8), block data (256), SHA-256 of the preceding offset and data (32 raw bytes). |
+
+Offsets must be 256-byte aligned and identify a complete block within the base
+image. On replay, the latest record for each block wins. Each successful write
+is synced before the in-memory overlay, write count, and completion are updated.
+An I/O or sync failure stops execution with `disk_overlay_write`. A complete
+record may survive a sync failure even though the guest did not receive
+completion; recovery may therefore include that last write.
+
+On reopening, incomplete final records are discarded after all complete records
+have been validated. Invalid headers, base-image mismatches, invalid offsets,
+and complete records with bad checksums are rejected without rewriting the
+overlay. An incomplete header is rejected rather than reset. The journal grows
+by one record per write, including repeated writes to the same block; there is
+no compaction or merge-to-base operation. Preserve both the original image and
+its overlay when backing up a session. To start again from the original state,
+choose a fresh overlay path. Overlay files and JSON reports can contain guest
+data and are private runtime artifacts.
 
 ## 6. Terminal/controller 0o50 and absent group 0o53
 
@@ -330,6 +372,8 @@ addresses 0–127, initializes accumulators and carry to zero, and starts at wor
 127. It also initializes word 10941 to zero as a compatibility assumption.
 Other memory starts unknown. This initialization is not a recovered ROM or a
 claim about physical power-on state; see [machine.rs](../src/machine.rs).
+The CLI then attaches its persistent overlay and reloads this bootstrap block
+from the saved version if present.
 
 Subsequent loader, interrupt-handler, runtime, and scheduler execution is guest
 code. The emulator implements CPU/controller operations rather than substituting

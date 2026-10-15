@@ -3,6 +3,7 @@ pub mod devices;
 pub mod interactive;
 pub mod machine;
 pub mod memory;
+mod overlay;
 pub mod screen;
 pub mod terminal;
 

@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 pub struct Disk {
     pub base: Vec<u8>,
     pub overlay: BTreeMap<usize, Vec<u8>>,
+    journal: Option<crate::overlay::OverlayFile>,
     pub a: Option<u16>,
     pub b: Option<u16>,
     pub c: Option<u16>,
@@ -22,6 +23,7 @@ impl Disk {
         Self {
             base,
             overlay: BTreeMap::new(),
+            journal: None,
             a: None,
             b: None,
             c: None,
@@ -33,6 +35,16 @@ impl Disk {
             dma_end: None,
             control_active: false,
         }
+    }
+    pub(crate) fn attach_overlay(
+        &mut self,
+        path: &std::path::Path,
+        image: &std::fs::File,
+    ) -> Result<(), String> {
+        let (journal, blocks) = crate::overlay::OverlayFile::open(path, image, &self.base)?;
+        self.overlay = blocks;
+        self.journal = Some(journal);
+        Ok(())
     }
     pub fn reset(&mut self) {
         self.a = None;
@@ -90,6 +102,11 @@ impl Disk {
             let mut raw = Vec::with_capacity(256);
             for n in 0..128 {
                 raw.extend_from_slice(&cpu.read(b + n)?.to_be_bytes());
+            }
+            if let Some(journal) = &mut self.journal {
+                journal.write_block(offset, &raw).map_err(|error| {
+                    Fault::with("disk_overlay_write", json!({"offset":offset,"error":error}))
+                })?;
             }
             self.overlay.insert(offset, raw);
             self.writes += 1;

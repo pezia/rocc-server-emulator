@@ -77,9 +77,10 @@ cargo build --release --locked
 ```
 
 Interactive mode requires a POSIX terminal at least 80 columns wide and 24 rows
-high. The image is opened read-only; guest writes remain in a private in-memory
-overlay for the current run. Operating systems, disk images, and application
-data are not included.
+high. The image is opened read-only; guest writes are saved in a separate
+`disk.img.overlay` file beside it and loaded on subsequent runs. Use
+`--overlay /path/to/session.overlay` to choose another overlay. Operating systems,
+disk images, and application data are not included.
 
 - [Build instructions and keyboard controls](https://github.com/pezia/rocc-server-emulator/blob/main/README.md)
 - [Machine architecture and compatibility limits](https://github.com/pezia/rocc-server-emulator/blob/main/docs/machine-architecture.md)

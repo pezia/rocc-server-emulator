@@ -25,9 +25,18 @@ cargo build --release --locked
 ./target/release/rocc-emulator boot /path/to/disk.img --interactive
 ```
 
-The input image is read-only. Guest writes stay in a private in-memory overlay;
-there is no overlay-resume feature. Guest time is instruction-based, not
-cycle-accurate.
+The input image is read-only. Guest writes are saved separately in
+`/path/to/disk.img.overlay` and loaded automatically on subsequent runs. Override
+that filename with `--overlay /path/to/session.overlay`. The overlay is required
+and must be writable; the original image is never modified. Guest time is
+instruction-based, not cycle-accurate.
+
+Each disk write is flushed to the overlay before the guest receives completion.
+The overlay is checked against the original image's size and SHA-256, and only
+one emulator may use it at a time. Use a new overlay filename to start from the
+original disk state, or keep separate overlays for independent sessions. See
+[persistent disk overlays](docs/machine-architecture.md#persistent-disk-overlays)
+for the file format and recovery behavior.
 
 For batch execution:
 
@@ -101,7 +110,8 @@ require no external disk image or private credentials.
   terminal protocol, bootstrap assumptions, and compatibility limits.
 
 - `src/cpu.rs`, `src/memory.rs`: instructions and banked memory.
-- `src/devices.rs`: controller behavior and private disk overlay.
+- `src/devices.rs`: controller behavior and changed-block disk overlay.
+- `src/overlay.rs`: persistent overlay journal and recovery.
 - `src/terminal.rs`, `src/screen.rs`: terminal protocol and display state.
 - `src/interactive.rs`: host keyboard, rendering, and terminal lifecycle.
 - `src/machine.rs`, `src/main.rs`: orchestration, CLI, and reports.

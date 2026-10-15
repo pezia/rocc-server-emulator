@@ -62,6 +62,29 @@ impl Machine {
             recent: VecDeque::with_capacity(32),
         })
     }
+    pub fn attach_overlay(
+        &mut self,
+        path: &std::path::Path,
+        image: &std::fs::File,
+    ) -> Result<(), String> {
+        if self.steps != 0 {
+            return Err("overlay must be attached before executing guest instructions".into());
+        }
+        self.bus.disk.attach_overlay(path, image)?;
+        let boot = self
+            .bus
+            .disk
+            .overlay
+            .get(&0)
+            .map(Vec::as_slice)
+            .unwrap_or(&self.bus.disk.base[..256]);
+        for n in 0..128 {
+            self.cpu
+                .memory
+                .set(n, u16::from_be_bytes([boot[2 * n], boot[2 * n + 1]]));
+        }
+        Ok(())
+    }
     pub fn step(&mut self) {
         if self.reason.is_some() {
             return;

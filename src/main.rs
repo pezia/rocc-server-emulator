@@ -30,7 +30,8 @@ Usage: rocc-emulator boot IMAGE [OPTIONS]\n\
   --connect-after N         Connect terminal at instruction N (live:26000000)\n\
   --address-bits 15|16      Extended requires16\n\
   --expected-sha256 HASH    Reject a different image\n\
-  --report NEWPATH          Create JSON report and private disk overlay\n\
+  --overlay PATH            Persistent disk writes (default: IMAGE.overlay)\n\
+  --report NEWPATH          Create JSON report including changed disk blocks\n\
   --key-at STEP:HEX         Inject byte before zero-based STEP (repeatable)\n\
   cpu-cases                JSON instruction fixtures on stdin for differential tests"
     );
@@ -59,6 +60,7 @@ fn run() -> Result<(), String> {
     }
     let mut image = None;
     let mut report = None;
+    let mut overlay = None;
     let mut profile = None;
     let mut terminal = None;
     let mut interactive = false;
@@ -95,6 +97,7 @@ fn run() -> Result<(), String> {
             "--terminal" => terminal = Some(value),
             "--expected-sha256" => expected = Some(value),
             "--report" => report = Some(PathBuf::from(value)),
+            "--overlay" => overlay = Some(PathBuf::from(value)),
             "--key-at" => {
                 let (step, byte) = value
                     .split_once(':')
@@ -173,10 +176,15 @@ fn run() -> Result<(), String> {
         return Err("interactive mode requires a terminal on stdin and stdout".into());
     }
     let image = image.ok_or("image path is required")?;
+    let overlay = overlay.unwrap_or_else(|| {
+        let mut name = image.as_os_str().to_os_string();
+        name.push(".overlay");
+        PathBuf::from(name)
+    });
     let destination = report.as_deref().map(check_destination).transpose()?;
     let mut raw = Vec::new();
-    File::open(&image)
-        .map_err(|e| e.to_string())?
+    let image_file = File::open(&image).map_err(|e| e.to_string())?;
+    (&image_file)
         .take(512 * 1024 * 1024 + 1)
         .read_to_end(&mut raw)
         .map_err(|e| e.to_string())?;
@@ -184,6 +192,11 @@ fn run() -> Result<(), String> {
     let mut m = Machine::new(raw, extended, bits as u8, experimental, connect)?;
     if expected.as_ref().is_some_and(|v| v != &m.image_sha256) {
         return Err("image SHA256 differs from expected value".into());
+    }
+    m.attach_overlay(&overlay, &image_file)?;
+    let overlay_path = fs::canonicalize(&overlay).map_err(|e| e.to_string())?;
+    if destination.as_ref() == Some(&overlay_path) {
+        return Err("report and overlay must use separate paths".into());
     }
     let interactive_report = if interactive {
         Some(rocc_emulator::interactive::run(&mut m, steps, bindings)?)
@@ -205,6 +218,7 @@ fn run() -> Result<(), String> {
     let mut data = m.report();
     data["elapsed_seconds"] = json!(elapsed);
     data["input"] = json!(fs::canonicalize(&image).map_err(|e| e.to_string())?);
+    data["overlay_path"] = json!(overlay_path);
     if let Some(v) = interactive_report {
         data["interactive"] = v;
     }
@@ -219,11 +233,12 @@ fn run() -> Result<(), String> {
         m.steps
     );
     println!(
-        "Disk: {} reads, {} writes to private overlay ({} blocks). Original image unchanged.",
+        "Disk: {} reads, {} writes to persistent overlay ({} blocks). Original image unchanged.",
         m.bus.disk.reads,
         m.bus.disk.writes,
         m.bus.disk.overlay.len()
     );
+    println!("Overlay: {}", overlay.display());
     if m.bus.terminal.total_display_bytes > 0 {
         for line in data["display"]["screen"]["lines"].as_array().unwrap() {
             println!("{}", line.as_str().unwrap());
