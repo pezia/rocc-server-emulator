@@ -814,3 +814,70 @@ h3 {
     transition: none !important;
   }
 }
+
+/* Keep the introduction compact and give the technical content priority. */
+.hero {
+  padding-top: 48px;
+  padding-bottom: 40px;
+}
+.hero h1 {
+  font-size: clamp(36px, 4.2vw, 56px);
+  line-height: 1.12;
+  letter-spacing: -1.8px;
+}
+.hero-description {
+  font-size: 16px;
+  max-width: 460px;
+}
+h2,
+.section h2 {
+  font-size: clamp(27px, 3vw, 35px);
+  letter-spacing: -1px;
+}
+.section {
+  padding-top: 55px;
+  padding-bottom: 55px;
+}
+.emulator-panel {
+  background: #e6eade;
+  color: var(--ink);
+  padding: 36px;
+}
+.emulator-panel .eyebrow,
+.system-flow > div > span {
+  color: #45613b;
+}
+.emulator-panel.section p:not(.eyebrow) {
+  color: #4e5e4d;
+}
+.system-flow > div {
+  border-color: #c6cfbc;
+}
+.validation {
+  border-bottom: 1px solid var(--line);
+  padding: 36px 0;
+}
+.validation p {
+  max-width: 790px;
+  font-size: 14px;
+  color: var(--muted);
+}
+.validation pre {
+  overflow-x: auto;
+  padding: 20px 24px;
+  background: #e6e8df;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  font: 12px/1.9 var(--mono);
+}
+@media (max-width: 700px) {
+  .hero h1 {
+    font-size: 42px;
+  }
+  .section {
+    padding-block: 36px;
+  }
+  .emulator-panel {
+    padding: 26px 22px;
+  }
+}

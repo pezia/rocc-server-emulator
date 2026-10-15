@@ -1,14 +1,14 @@
 ---
 layout: default
 home: true
-title: A classic, coming back to life
+title: The ROCC computer and emulator
 ---
 <section class="hero" aria-labelledby="hero-title">
   <div class="hero-copy">
-    <p class="eyebrow"><span class="status-dot" aria-hidden="true"></span> A computing history project</p>
-    <h1 id="hero-title">Old hardware.<br>New <em>life.</em></h1>
-    <p class="hero-description">Bringing the world of ROCC business computers back to the screen. One instruction, one discovery at a time.</p>
-    <div class="actions"><a class="button" href="#the-machine">Meet the machine <span aria-hidden="true">↗︎</span></a><a class="text-link" href="#try-the-emulator">Try the emulator <span aria-hidden="true">→</span></a></div>
+    <p class="eyebrow"><span class="status-dot" aria-hidden="true"></span> ROCC 2800 Classic · experimental emulator</p>
+    <h1 id="hero-title">The ROCC computer<br>and its emulator</h1>
+    <p class="hero-description">An introduction to ROCC business minicomputers and a Rust emulator that reconstructs their CPU, memory, disk controller, and terminal.</p>
+    <div class="actions"><a class="button" href="#the-machine">About the computer <span aria-hidden="true">↗︎</span></a><a class="text-link" href="#try-the-emulator">Build and run <span aria-hidden="true">→</span></a></div>
     <p class="hero-note">Experimental Rust emulator · Inferred hardware</p>
   </div>
   {% assign machine_photo = site.static_files | where: "path", "/media/machine-front.jpg" | first %}
@@ -18,37 +18,46 @@ title: A classic, coming back to life
     {% else %}
     <div class="machine-drawing" role="img" aria-label="Stylized terminal illustration; a real machine photograph will be added later.">
       <span class="drawing-orbit" aria-hidden="true"></span>
-      <div class="terminal-case" aria-hidden="true"><div class="terminal-glass"><span>ROCC / CLASSIC</span><span class="terminal-line">A history still being written.</span><span class="terminal-cursor">_</span></div><div class="terminal-badge">ROCC <span>●</span></div></div>
+      <div class="terminal-case" aria-hidden="true"><div class="terminal-glass"><span>ROCC / CLASSIC</span><span class="terminal-line">24 rows / 80 columns</span><span class="terminal-cursor">_</span></div><div class="terminal-badge">ROCC <span>●</span></div></div>
       <div class="terminal-stand" aria-hidden="true"></div><div class="terminal-keyboard" aria-hidden="true"><div></div></div>
     </div>
     {% endif %}
-    <figcaption><span>{% if machine_photo %}The owner's ROCC computer{% else %}An impression of an era{% endif %}</span><span>{% if machine_photo %}See gallery below{% else %}Illustration · photo forthcoming{% endif %}</span></figcaption>
+    <figcaption><span>{% if machine_photo %}The owner's ROCC computer{% else %}Terminal illustration{% endif %}</span><span>{% if machine_photo %}See gallery below{% else %}Illustration · photo forthcoming{% endif %}</span></figcaption>
   </figure>
 </section>
-<div class="spec-strip" aria-label="Emulated hardware"><div><strong>16-bit</strong><span>Nova ancestry</span></div><div><strong>Banked</strong><span>Memory model</span></div><div><strong>24 × 80</strong><span>Terminal display</span></div><div><strong>Rust</strong><span>Built for exploration</span></div></div>
+<div class="spec-strip" aria-label="Emulated hardware"><div><strong>16-bit</strong><span>Nova ancestry</span></div><div><strong>Banked</strong><span>Memory model</span></div><div><strong>24 × 80</strong><span>Terminal display</span></div><div><strong>Rust</strong><span>Implementation language</span></div></div>
 
 <section class="section intro" id="the-machine">
-  <div><p class="eyebrow">01 / The machine</p><h2>Before personal.<br>There was <em>shared.</em></h2></div>
+  <div><p class="eyebrow">01 / The machine</p><h2>ROCC Classic systems</h2></div>
   <div class="prose"><p>ROCC's Classic systems were business minicomputers: one computer, multiple operators, a desk full of terminals. Descended from the 16-bit Data General Nova architecture, they handled data entry and business processing.</p><p>Their software evolved from releases known as “Loads” into the Workstation Management System (WMS). The 1986–87 Classic range included the 2825 and 2835 in the compact “Miniboy” cabinet.</p><p class="muted">This project provisionally identifies its target as the ROCC 2800 Classic family. The exact model and processor revision remain unresolved.</p></div>
 </section>
-<section class="gallery-section" aria-labelledby="archive-title"><div class="section-heading"><h2 id="archive-title">From the archive</h2><p>The computer. The terminal. The details.</p></div>
+<section class="gallery-section" aria-labelledby="archive-title"><div class="section-heading"><h2 id="archive-title">Machine photographs</h2><p>Photographs of the computer and terminal will be added here.</p></div>
 {% include gallery.html items=site.data.gallery.machine %}
 </section>
 
 <section class="emulator-panel section" id="the-emulator">
-  <div><p class="eyebrow">02 / The emulator</p><h2>The instructions<br>are original.<br><em>The stage is new.</em></h2><p>A CPU, banked memory, disk controller, interrupts, and a terminal—reconstructed in Rust so guest software can execute its own code.</p><a class="text-link" href="https://github.com/pezia/rocc-server-emulator/blob/main/docs/machine-architecture.md">Inside the architecture <span aria-hidden="true">↗︎</span></a></div>
-  <div class="system-flow"><div><span>01</span><h3>Load a disk image</h3><p>Your compatible image provides the original guest software.</p></div><div><span>02</span><h3>Let the guest take over</h3><p>Guest code handles loading, scheduling, interrupts, and terminal I/O.</p></div><div><span>03</span><h3>Bring the screen to life</h3><p>The host renders the terminal and forwards your keystrokes.</p></div></div>
+  <div><p class="eyebrow">02 / The emulator</p><h2>What the emulator models</h2><p>The emulator implements a CPU, banked memory, disk controller, interrupts, and a 24 × 80 terminal. Hardware behavior is inferred and remains incomplete. Guest time is instruction-based, not cycle-accurate.</p><a class="text-link" href="https://github.com/pezia/rocc-server-emulator/blob/main/docs/machine-architecture.md">Machine architecture and compatibility notes <span aria-hidden="true">↗︎</span></a></div>
+  <div class="system-flow"><div><span>01</span><h3>Load a disk image</h3><p>Your compatible image provides the original guest software.</p></div><div><span>02</span><h3>Execute guest code</h3><p>Guest code handles loading, scheduling, interrupts, and terminal I/O.</p></div><div><span>03</span><h3>Terminal input and output</h3><p>The host renders the terminal and forwards your keystrokes.</p></div></div>
 </section>
-<section class="gallery-section" aria-labelledby="screens-title"><div class="section-heading"><h2 id="screens-title">Back on screen</h2><p>Space for real guest captures, as they become available.</p></div>
+<section class="gallery-section" aria-labelledby="screens-title"><div class="section-heading"><h2 id="screens-title">Emulator screenshots</h2><p>No guest-system screenshots have been supplied yet.</p></div>
 {% include gallery.html items=site.data.gallery.screenshots screen=true %}
-<p class="editorial-note">A reconstruction in progress. Unsupported operations stop with diagnostics. Public tests use synthetic instructions and images; compatibility with a complete historical operating system requires separate validation.</p>
+<p class="editorial-note">Unsupported operations stop with diagnostics. Public tests use synthetic instructions and images; compatibility with a complete historical operating system requires separate validation.</p>
 </section>
 
-<section class="section getting-started" id="try-the-emulator"><div><p class="eyebrow">03 / Get hands-on</p><h2>A little history.<br>A little <em>command line.</em></h2><p>Bring Rust 1.87 or later, a C linker, and your own compatible disk image.</p><a class="text-link" href="https://github.com/pezia/rocc-server-emulator/blob/main/README.md">Full setup & keyboard guide <span aria-hidden="true">↗︎</span></a></div><div><div class="code-window"><div class="code-title"><span aria-hidden="true">● ● ●</span> terminal / quick start</div><pre><code><span class="code-comment"># Build the emulator</span>
+<section class="section getting-started" id="try-the-emulator"><div><p class="eyebrow">03 / Build and run</p><h2>Running the emulator</h2><p>Requires Rust 1.87 or later, a C linker, and a compatible disk image. The repository includes tests that run without an external image.</p><a class="text-link" href="https://github.com/pezia/rocc-server-emulator/blob/main/README.md">Full setup & keyboard guide <span aria-hidden="true">↗︎</span></a></div><div><div class="code-window"><div class="code-title"><span aria-hidden="true">● ● ●</span> terminal / quick start</div><pre><code><span class="code-comment"># Build the emulator</span>
 cargo build --release --locked
 
 <span class="code-comment"># Boot your disk image</span>
 ./target/release/rocc-emulator boot \
   /path/to/disk.img --interactive</code></pre></div><p class="runtime-note">Use a POSIX terminal of at least 80 × 24. Disk images stay read-only; guest writes persist in a separate, writable <code>.overlay</code>. Operating systems and disk images are not included.</p></div></section>
 
-<section class="section sources" id="historical-sources"><div><p class="eyebrow">04 / Keep exploring</p><h2>Follow the <em>threads.</em></h2><p>Built from clues, grounded in the record.</p></div><div class="source-list"><a href="https://www.aldricharchive.co.uk/a-technical-history-of-rocc-computers"><span><strong>A technical history of ROCC</strong><small>Michael Aldrich Archive · generations, terminals & WMS</small></span><span aria-hidden="true">↗︎</span></a><a href="https://www.aldricharchive.co.uk/rocc-technical-documents"><span><strong>The preserved technical documents</strong><small>Michael Aldrich Archive · catalogue of non-digitised material</small></span><span aria-hidden="true">↗︎</span></a><a href="https://www.computinghistory.org.uk/det/50187/ROCC-Server/"><span><strong>ROCC in the museum</strong><small>Centre for Computing History · historical context</small></span><span aria-hidden="true">↗︎</span></a><a href="https://github.com/pezia/rocc-server-emulator/blob/main/docs/cpu-isa.md"><span><strong>Under the hood: the instruction set</strong><small>Project documentation · formats, addressing & extensions</small></span><span aria-hidden="true">↗︎</span></a></div></section>
+<section class="validation" aria-labelledby="tests-title">
+  <h2 id="tests-title">Tests and current status</h2>
+  <p>The CLI tests use synthetic disk images. The CPU regression compares 8,262 generated instruction cases against frozen reference results. These checks exercise the implementation; they do not establish compatibility with a complete historical operating system.</p>
+  <pre><code>cargo test --locked
+cargo build --release --locked
+python3 tests/cli.py
+python3 tests/regression.py --cpu</code></pre>
+</section>
+
+<section class="section sources" id="historical-sources"><div><p class="eyebrow">04 / References</p><h2>Documentation and sources</h2><p>Historical material and notes on the inferred hardware. The museum record provides context; it does not identify the specific machine emulated here.</p></div><div class="source-list"><a href="https://www.aldricharchive.co.uk/a-technical-history-of-rocc-computers"><span><strong>A technical history of ROCC</strong><small>Michael Aldrich Archive · generations, terminals & WMS</small></span><span aria-hidden="true">↗︎</span></a><a href="https://www.aldricharchive.co.uk/rocc-technical-documents"><span><strong>The preserved technical documents</strong><small>Michael Aldrich Archive · catalogue of non-digitised material</small></span><span aria-hidden="true">↗︎</span></a><a href="https://www.computinghistory.org.uk/det/50187/ROCC-Server/"><span><strong>ROCC in the museum</strong><small>Centre for Computing History · historical context</small></span><span aria-hidden="true">↗︎</span></a><a href="https://github.com/pezia/rocc-server-emulator/blob/main/docs/cpu-isa.md"><span><strong>CPU instruction-set reference</strong><small>Project documentation · formats, addressing & extensions</small></span><span aria-hidden="true">↗︎</span></a></div></section>
