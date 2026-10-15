@@ -8,6 +8,13 @@ execution with diagnostics.
 No operating system, disk images, application data, or credentials are included.
 Supply your own compatible image explicitly.
 
+## GitHub Pages
+
+The [public introduction](docs/index.md) explains the ROCC machine, links to
+historical archive and museum records, and reserves galleries for owner-supplied
+machine photos and real-system screenshots. See the
+[GitHub Pages guide](docs/github-pages.md) to enable publishing and add images.
+
 ## Build and run
 
 Requires Rust 1.87 or later and a C linker. Interactive mode requires a POSIX

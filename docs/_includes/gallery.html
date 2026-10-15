@@ -1,0 +1,12 @@
+{% for item in include.items %}
+<figure style="margin: 1.5rem 0;">
+  <h3>{{ item.title | escape }}</h3>
+  {% assign asset = site.static_files | where: "path", item.path | first %}
+  {% if asset %}
+  <a href="{{ item.path | relative_url }}"><img src="{{ item.path | relative_url }}" alt="{{ item.alt | escape }}" loading="lazy" style="display: block; max-width: 100%; height: auto;"></a>
+  <figcaption>{{ item.caption | escape }}</figcaption>
+  {% else %}
+  <p style="padding: 1.5rem; border: 1px dashed #767676;">{{ item.pending | escape }}</p>
+  {% endif %}
+</figure>
+{% endfor %}

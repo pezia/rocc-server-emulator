@@ -1,0 +1,9 @@
+title: ROCC emulator
+description: Exploring the ROCC 2800 Classic through an experimental Rust emulator.
+theme: jekyll-theme-primer
+url: https://pezia.github.io
+baseurl: /rocc-server-emulator
+repository: pezia/rocc-server-emulator
+exclude:
+  - github-pages.md
+  - media/README.md

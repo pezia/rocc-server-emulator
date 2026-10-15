@@ -1,0 +1,22 @@
+machine:
+  - path: /media/machine-front.jpg
+    title: The machine
+    alt: Front view of the owner's ROCC computer.
+    caption: Owner-supplied photograph. Model identification and photo credit to be added with the image.
+    pending: A photograph of the machine will be added here.
+  - path: /media/machine-terminal.jpg
+    title: Terminal and keyboard
+    alt: The terminal and keyboard belonging to the owner's ROCC system.
+    caption: Owner-supplied photograph. Terminal identification and photo credit to be added with the image.
+    pending: A photograph of the terminal and keyboard will be added here.
+screenshots:
+  - path: /media/system-startup.png
+    title: System startup
+    alt: Emulator terminal displaying startup output from original guest software.
+    caption: Add the guest system name, release, capture date, and explanation of the visible startup stage with this screenshot.
+    pending: A screenshot of real guest software starting in the emulator will be added here.
+  - path: /media/system-session.png
+    title: An interactive session
+    alt: Emulator terminal displaying an interactive session with original guest software.
+    caption: Add the guest system name, release, capture date, and explanation of the visible operation with this screenshot.
+    pending: A screenshot of an interactive session with real guest software will be added here.
