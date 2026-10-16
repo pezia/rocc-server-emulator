@@ -3,5 +3,7 @@ __pycache__/
 *.pyc
 *.img
 *.overlay
+*.ram
+.rocc-ram-*
 *.sqlite
 /report*.json

@@ -38,6 +38,21 @@ original disk state, or keep separate overlays for independent sessions. See
 [persistent disk overlays](docs/machine-architecture.md#persistent-disk-overlays)
 for the file format and recovery behavior.
 
+RAM is also saved automatically in `OVERLAY.ram`, for example
+`/path/to/disk.img.overlay.ram`. The next boot restores all RAM banks, resets the
+CPU and controllers, and runs the bootstrap. This preserves memory needed by WMS
+restart; it does not resume the exact instruction or restore the display.
+Keep the base image, overlay, and RAM sidecar together when backing up a session.
+Use the same CPU profile and address width on subsequent runs.
+
+RAM is saved on orderly exits, instruction-budget completion, HALT, and signals
+handled by interactive mode. A forced kill or crash leaves an active-session
+marker; the next ordinary launch refuses that snapshot and directs you to cold
+recovery. Corrupt snapshots or mismatched disk state are also rejected. This
+version does not continuously save RAM or guarantee host power-loss recovery.
+`--no-memory` disables both RAM loading and saving; changing disk state that way
+can make a previous RAM snapshot incompatible.
+
 For batch execution:
 
 ```sh
@@ -78,17 +93,23 @@ never overwritten.
 
 ### Rebooting an existing WMS overlay
 
-The overlay saves disk writes, not RAM. After WMS has run, its saved system block
-can select a restart path that expects RAM from the previous session. Boot that
-overlay with the loader's operator cold-start sequence:
+An existing disk-only overlay lacks the RAM expected by WMS's restart path.
+Initialize retained RAM once with the loader's operator cold-start sequence:
 
 ```sh
 ./target/release/rocc-emulator boot /path/to/disk.img --interactive --cold-boot
 ```
 
+Exit with Ctrl-] to save RAM. Subsequent launches use the ordinary command:
+
+```sh
+./target/release/rocc-emulator boot /path/to/disk.img --interactive
+```
+
 `--cold-boot` requires the extended profile (selected by `--interactive`). It sets
 the modeled front-panel switches to `F0F0`. At the recognized WMS loader recovery
-HALT, it changes them to `FFFF` and continues once. The guest then initializes RAM
+HALT, it changes them to `FFFF` and continues once. Cold boot bypasses any saved
+RAM and replaces its recognized sidecar after an orderly run. The guest initializes RAM
 and updates the existing overlay through normal disk writes. It does not erase
 the overlay or patch guest memory. Other HALTs still stop execution. The sequence
 is specific to the recovered WMS loader; other guest loaders are not covered.
@@ -97,6 +118,8 @@ Batch runs must also select `--profile extended` explicitly.
 Reports record `configuration.cold_boot`, `cold_boot_completed`, and the final
 `front_panel_switches` value. A fresh overlay may boot without entering recovery,
 in which case `cold_boot_completed` remains false.
+`memory_persistence` records whether RAM was restored, its sidecar path and loaded
+identity, whether cold boot bypassed restoration, and whether the new save committed.
 
 Reports are created privately (`0600`, restricted further by the umask), streamed
 to a temporary file, synced, and published without overwriting another file.
@@ -104,7 +127,8 @@ Report schema 2 records effective configuration, build revision, scheduled input
 initial/final overlay identities, and separate full-stream/retained-output hashes and total/retained packet counts.
 Interactive delivered-key history retains 65536 entries; `replay_complete` records
 whether earlier entries were discarded. Reports are diagnostics, not checkpoints.
-Runs without `--report` skip detailed report construction and memory hashing.
+Runs without `--report` skip detailed report construction and diagnostic memory
+hashing. RAM snapshots still compute their integrity checksum.
 
 ## Keyboard and display
 

@@ -208,10 +208,66 @@ have been validated. Invalid headers, base-image mismatches, invalid offsets,
 and complete records with bad checksums are rejected without rewriting the
 overlay. An incomplete header is rejected rather than reset. The journal grows
 by one record per write, including repeated writes to the same block; compaction is available through `compact-overlay IMAGE --overlay SOURCE
---output NEWPATH`; there is no merge-to-base operation. Preserve both the original image and
-its overlay when backing up a session. To start again from the original state,
+--output NEWPATH`; there is no merge-to-base operation. Preserve the original image,
+its overlay, and its RAM sidecar when backing up a session. To start again from the original state,
 choose a fresh overlay path. Overlay files and JSON reports can contain guest
 data and are private runtime artifacts.
+
+### Retained memory sidecars
+
+CLI boots pair the canonical overlay path with `OVERLAY.ram` by default. A memory
+snapshot preserves every physical RAM cell, including inactive banks and the
+distinction between initialized zero and unknown memory. It does not preserve
+CPU registers, bank selection, controller queues, instruction time, or screen
+state. Library construction remains stateless until `Machine::attach_memory` is
+called after `attach_overlay` and before guest execution. `finish_memory` ends
+an orderly run and publishes retained RAM; faults leave the session active.
+
+The sidecar must match the base-image size and SHA-256, CPU profile, address width,
+memory geometry, and effective disk-overlay digest. Overlay identity uses sorted
+latest block values, not journal length, so compaction alone does not change it.
+A compacted overlay at a new path needs its matching `.ram` file copied there
+explicitly. Corruption or a mismatched pair stops before guest execution.
+`--no-memory` bypasses both loading and saving. `--cold-boot` bypasses saved RAM
+and may replace an emulator-owned sidecar after an orderly recovery run; arbitrary
+unrecognized files and unsupported versions are never overwritten automatically.
+
+Version 1 has a 160-byte header and big-endian integers:
+
+| Byte range | Meaning |
+| --- | --- |
+| 0..8 | ASCII `ROCCRAM1` |
+| 8..10 | u16 version 1 |
+| 10 | 0 committed, 1 active session |
+| 11 | 0 loader, 1 extended CPU profile |
+| 12 | Address width, 15 or 16 |
+| 13..16 | Reserved zeros |
+| 16..20, 20..24 | u32 global words and words per bank |
+| 24..28, 28..32 | u32 bank count and total physical words |
+| 32..40 | u64 base-image length |
+| 40..72, 72..104 | Base-image and effective overlay-state SHA-256 bytes |
+| 104..128 | Reserved zeros |
+| 128..160 | SHA-256 of bytes 0..128 followed by the payload |
+
+Each physical word is encoded as a one-byte initialized flag followed by its
+two-byte value. An unknown cell is exactly `00 00 00`; a known zero is `01 00 00`.
+Invalid flags, noncanonical unknown words, trailing data, and truncated payloads
+are rejected. The largest configuration has a 1,757,184-byte payload.
+
+Before execution, the snapshot's active byte is synced to disk. A new sidecar can
+start as a header-only active marker. This invalidates the previous clean save
+even when no guest disk writes occur. Only an orderly exit publishes a complete
+committed snapshot, using a private same-directory temporary, file sync, atomic
+rename, then directory sync. A failure before rename retains the active marker;
+a later failure can leave the complete new snapshot and still returns an error.
+The overlay lock is held throughout restore, execution, and snapshot publication.
+
+Sidecars and temporary files are private (`0600`, restricted by umask). Symlinks,
+nonregular files, multiple hard links, protected-file aliases, and a report path
+equal to the sidecar are rejected before marking it active. Disk and RAM persistence
+remain separate durability mechanisms: SIGKILL, a crash, or a host power loss
+cannot guarantee an updated RAM snapshot. Handled interactive signals save after
+terminal cleanup and retain their signal exit code when saving succeeds.
 
 ## 6. Terminal/controller 0o50 and absent group 0o53
 
@@ -385,7 +441,10 @@ addresses 0–127, initializes accumulators and carry to zero, and starts at wor
 Other memory starts unknown. This initialization is not a recovered ROM or a
 claim about physical power-on state; see [machine.rs](../src/machine.rs).
 The CLI then attaches its persistent overlay and reloads this bootstrap block
-from the saved version if present.
+from the saved version if present. It subsequently attaches retained RAM unless
+disabled: restore physical memory, reset mapping to bank zero, and reload the
+effective bootstrap at words 0 through 127. Saved word 10941 is preserved; only
+a boot without retained RAM uses the compatibility zero initialization.
 
 Subsequent loader, interrupt-handler, runtime, and scheduler execution is guest
 code. The emulator implements CPU/controller operations rather than substituting
