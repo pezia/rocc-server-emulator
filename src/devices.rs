@@ -71,32 +71,39 @@ impl Disk {
                 .is_some_and(|b| b as usize + 128 > cpu.memory.global_words)
         {
             return Err(Fault::with(
-                "unmapped_memory_bank",
+                crate::FaultKind::UnmappedMemoryBank,
                 json!({"address":self.b}),
             ));
         }
         let a = self
             .a
-            .ok_or_else(|| Fault::new("disk_register_uninitialized"))?;
+            .ok_or_else(|| Fault::new(crate::FaultKind::DiskRegisterUninitialized))?;
         let c = self
             .c
-            .ok_or_else(|| Fault::new("disk_register_uninitialized"))?;
+            .ok_or_else(|| Fault::new(crate::FaultKind::DiskRegisterUninitialized))?;
         if a & !0x103f != 0 {
-            return Err(Fault::with("unsupported_disk_command", json!({"A":a})));
+            return Err(Fault::with(
+                crate::FaultKind::UnsupportedDiskCommand,
+                json!({"A":a}),
+            ));
         }
         let b = self
             .b
-            .ok_or_else(|| Fault::new("disk_register_uninitialized"))? as usize;
+            .ok_or_else(|| Fault::new(crate::FaultKind::DiskRegisterUninitialized))?
+            as usize;
         let head = (c as usize >> 10) * 2 + ((a as usize >> 5) & 1);
         let offset = ((c as usize & 1023) * 20 + head) * 8192 + (a as usize & 31) * 256;
         if head >= 20 || offset + 256 > self.base.len() {
             return Err(Fault::with(
-                "disk_address_bounds",
+                crate::FaultKind::DiskAddressBounds,
                 json!({"offset":offset,"head":head}),
             ));
         }
         if b + 128 > cpu.memory.logical_words {
-            return Err(Fault::with("disk_dma_bounds", json!({"RAM_word":b})));
+            return Err(Fault::with(
+                crate::FaultKind::DiskDmaBounds,
+                json!({"RAM_word":b}),
+            ));
         }
         if a & 0x1000 != 0 {
             let mut raw = Vec::with_capacity(256);
@@ -105,7 +112,10 @@ impl Disk {
             }
             if let Some(journal) = &mut self.journal {
                 journal.write_block(offset, &raw).map_err(|error| {
-                    Fault::with("disk_overlay_write", json!({"offset":offset,"error":error}))
+                    Fault::with(
+                        crate::FaultKind::DiskOverlayWrite,
+                        json!({"offset":offset,"error":error}),
+                    )
                 })?;
             }
             self.overlay.insert(offset, raw);
@@ -145,7 +155,7 @@ impl Disk {
         if extended && (op, p) == (3, 0) {
             r.value = Some(
                 self.dma_end
-                    .ok_or_else(|| Fault::new("disk_dma_result_uninitialized"))?,
+                    .ok_or_else(|| Fault::new(crate::FaultKind::DiskDmaResultUninitialized))?,
             );
             return Ok(r);
         }
@@ -173,7 +183,7 @@ impl Disk {
             }
             _ => {
                 return Err(Fault::with(
-                    "unsupported_disk_operation",
+                    crate::FaultKind::UnsupportedDiskOperation,
                     json!({"operation":op,"pulse":p}),
                 ))
             }
@@ -236,7 +246,7 @@ impl Bus {
             0o50 => {
                 if !self.extended && (op, p) != (2, 3) {
                     return Err(Fault::with(
-                        "unsupported_setup_operation",
+                        crate::FaultKind::UnsupportedSetupOperation,
                         json!({"operation":op,"pulse":p,"value":v}),
                     ));
                 }
@@ -257,9 +267,9 @@ impl Bus {
                 } else {
                     return Err(Fault::with(
                         if self.extended && (op, p) != (2, 3) {
-                            "unsupported_terminal_operation"
+                            crate::FaultKind::UnsupportedTerminalOperation
                         } else {
-                            "unsupported_setup_operation"
+                            crate::FaultKind::UnsupportedSetupOperation
                         },
                         json!({"operation":op,"pulse":p,"value":v}),
                     ));
@@ -272,7 +282,7 @@ impl Bus {
                         r.value = Some(v);
                     } else {
                         return Err(Fault::with(
-                            "unsupported_io",
+                            crate::FaultKind::UnsupportedIo,
                             json!({"device":num,"operation":op,"pulse":p}),
                         ));
                     }
@@ -282,10 +292,10 @@ impl Bus {
                         return Ok(r);
                     }
                     if ![0, 3, 4, 5].contains(&op) {
-                        return Err(Fault::new("unsupported_cpu_control"));
+                        return Err(Fault::new(crate::FaultKind::UnsupportedCpuControl));
                     }
                     if p > 2 {
-                        return Err(Fault::new("unsupported_cpu_pulse"));
+                        return Err(Fault::new(crate::FaultKind::UnsupportedCpuPulse));
                     }
                     if op == 3 {
                         r.value = Some(self.pending().unwrap_or(0) as u16);
@@ -313,7 +323,7 @@ impl Bus {
                     } else {
                         if (v >> 8) as usize >= cpu.memory.banks {
                             return Err(Fault::with(
-                                "unsupported_memory_bank",
+                                crate::FaultKind::UnsupportedMemoryBank,
                                 json!({"selector":v}),
                             ));
                         }
@@ -329,7 +339,7 @@ impl Bus {
                     r.skip = [false, true, false, true][p as usize];
                 } else {
                     return Err(Fault::with(
-                        "unsupported_bank_operation",
+                        crate::FaultKind::UnsupportedBankOperation,
                         json!({"operation":op,"pulse":p}),
                     ));
                 }
@@ -341,7 +351,9 @@ impl Bus {
                 } else if (op, p) == (1, 2) {
                     r.value = Some(0);
                 } else {
-                    return Err(Fault::new("unsupported_optional_device_operation"));
+                    return Err(Fault::new(
+                        crate::FaultKind::UnsupportedOptionalDeviceOperation,
+                    ));
                 }
             }
             0o40 | 0o41 if self.extended => {
@@ -361,7 +373,7 @@ impl Bus {
                     }
                 };
                 if !valid {
-                    return Err(Fault::new("unsupported_auxiliary_operation"));
+                    return Err(Fault::new(crate::FaultKind::UnsupportedAuxiliaryOperation));
                 }
                 values.push(v);
             }
@@ -373,12 +385,12 @@ impl Bus {
                     && (v - 0xd80e).is_multiple_of(128)
                 {
                 } else {
-                    return Err(Fault::new("unsupported_optional51_operation"));
+                    return Err(Fault::new(crate::FaultKind::UnsupportedOptional51Operation));
                 }
             }
             _ => {
                 return Err(Fault::with(
-                    "unsupported_io",
+                    crate::FaultKind::UnsupportedIo,
                     json!({"device":num,"operation":op,"pulse":p}),
                 ))
             }
@@ -420,7 +432,7 @@ mod tests {
         disk.b = Some(1000);
         disk.c = Some(0);
         assert_eq!(
-            disk.transfer(&mut cpu, true).unwrap_err().reason,
+            disk.transfer(&mut cpu, true).unwrap_err().reason(),
             "uninitialized_memory"
         );
         assert!(disk.overlay.is_empty());
@@ -437,17 +449,17 @@ mod tests {
         let mut cpu = Cpu::new(16, true);
         let mut bus = Bus::new(vec![0; 6144], false, false, None);
         assert_eq!(
-            bus.io(&mut cpu, 0o50, 7, 0, 0).unwrap_err().reason,
+            bus.io(&mut cpu, 0o50, 7, 0, 0).unwrap_err().reason(),
             "unsupported_setup_operation"
         );
         bus.extended = true;
         let f = bus.io(&mut cpu, 0o53, 2, 3, 128).unwrap_err();
-        assert_eq!(f.reason, "unsupported_setup_operation");
-        assert_eq!(f.details["value"], 128);
+        assert_eq!(f.reason().to_string(), "unsupported_setup_operation");
+        assert_eq!(f.details()["value"], 128);
         cpu.global_only = true;
         bus.disk.b = Some(0xf000);
         assert_eq!(
-            bus.disk.transfer(&mut cpu, true).unwrap_err().reason,
+            bus.disk.transfer(&mut cpu, true).unwrap_err().reason(),
             "unmapped_memory_bank"
         );
     }

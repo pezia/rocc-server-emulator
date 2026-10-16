@@ -17,6 +17,7 @@ pub fn digest(raw: &[u8]) -> String {
 }
 
 pub struct Machine {
+    config: crate::config::MachineConfig,
     pub cpu: Cpu,
     pub bus: Bus,
     pub steps: u64,
@@ -34,6 +35,35 @@ impl Machine {
         terminal: bool,
         connect: Option<u64>,
     ) -> Result<Self, String> {
+        use crate::config::*;
+        let config = MachineConfig::new(
+            if extended {
+                CpuProfile::Extended
+            } else {
+                CpuProfile::Loader
+            },
+            address_bits,
+            if terminal {
+                TerminalProfile::Experimental
+            } else {
+                TerminalProfile::None
+            },
+            connect,
+            ResourceLimits::default(),
+            CaptureMode::Stop,
+        )?;
+        Self::with_config(raw, config)
+    }
+    pub fn config(&self) -> &crate::config::MachineConfig {
+        &self.config
+    }
+    pub fn with_config(raw: Vec<u8>, config: crate::config::MachineConfig) -> Result<Self, String> {
+        let (extended, address_bits, terminal, connect) = (
+            config.extended(),
+            config.address_bits(),
+            config.experimental(),
+            config.connect_after(),
+        );
         if raw.len() < 6144 || !raw.len().is_multiple_of(256) {
             return Err("boot image must contain at least24 complete256-byte blocks".into());
         }
@@ -52,6 +82,7 @@ impl Machine {
         cpu.memory.set(10941, 0);
         cpu.pc = 127;
         Ok(Self {
+            config,
             cpu,
             bus: Bus::new(raw, extended, terminal, connect),
             steps: 0,
@@ -104,7 +135,7 @@ impl Machine {
                 let (pc, word) = self.cpu.last_instruction.unwrap_or((self.cpu.pc, 0));
                 self.block_moves +=
                     u64::from(self.cpu.last_instruction.is_some_and(|(_, w)| w == 0x8208));
-                self.reason = Some(f.reason.clone());
+                self.reason = Some(f.reason().to_string());
                 self.fault = Some(f);
                 if self.recent.len() == 32 {
                     self.recent.pop_front();
@@ -138,7 +169,7 @@ impl Machine {
             "display":self.bus.terminal.display_report(),"memory_sha256":digest(&memory),
             "overlay":self.bus.overlay_report(&self.image_sha256),
             "recent_instructions":self.recent.iter().map(|(pc,word,next)|json!({"pc":pc,"word":word,"next_pc":next})).collect::<Vec<_>>(),
-            "fault":self.fault.as_ref().map(|f|&f.details)})
+            "fault":self.fault.as_ref().map(|f|f.details())})
     }
 }
 pub fn cpu_state(cpu: &Cpu, extended: bool) -> Value {

@@ -671,7 +671,11 @@ pub fn run(
             && machine.steps >= k.next_step
         {
             if let Some(key) = k.pending.pop_front() {
-                machine.bus.terminal.send_key(key).map_err(|f| f.reason)?;
+                machine
+                    .bus
+                    .terminal
+                    .send_key(key)
+                    .map_err(|f| f.reason().to_string())?;
                 k.delivered += 1;
                 k.next_step = machine.steps.saturating_add(2000);
             }

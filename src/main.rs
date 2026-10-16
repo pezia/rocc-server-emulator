@@ -70,6 +70,7 @@ fn run() -> Result<(), String> {
     let mut bits = None;
     let mut expected = None;
     let mut keys = Vec::new();
+    let (mut event_limit, mut capture_bytes, mut packet_limit) = (4096, 1048576, 4096);
     while let Some(arg) = args.next() {
         if arg == "--interactive" {
             interactive = true;
@@ -89,6 +90,9 @@ fn run() -> Result<(), String> {
             .next()
             .ok_or_else(|| format!("missing value for {arg}"))?;
         match arg.as_str() {
+            "--event-limit" => event_limit = number(&value, "event limit")?,
+            "--capture-bytes" => capture_bytes = number(&value, "capture bytes")?,
+            "--packet-limit" => packet_limit = number(&value, "packet limit")?,
             "--keymap" => keymap = Some(value),
             "--steps" => steps = Some(number(&value, "step budget")?),
             "--connect-after" => connect = Some(number(&value, "connection time")?),
@@ -175,6 +179,32 @@ fn run() -> Result<(), String> {
     if interactive && unsafe { libc::isatty(0) != 1 || libc::isatty(1) != 1 } {
         return Err("interactive mode requires a terminal on stdin and stdout".into());
     }
+    use rocc_emulator::config::*;
+    let limits = ResourceLimits::new(
+        usize::try_from(event_limit).map_err(|_| "event limit too large")?,
+        usize::try_from(capture_bytes).map_err(|_| "capture limit too large")?,
+        usize::try_from(packet_limit).map_err(|_| "packet limit too large")?,
+    )?;
+    let config = MachineConfig::new(
+        if extended {
+            CpuProfile::Extended
+        } else {
+            CpuProfile::Loader
+        },
+        bits as u8,
+        if experimental {
+            TerminalProfile::Experimental
+        } else {
+            TerminalProfile::None
+        },
+        connect,
+        limits,
+        if interactive {
+            CaptureMode::Tail
+        } else {
+            CaptureMode::Stop
+        },
+    )?;
     let image = image.ok_or("image path is required")?;
     let overlay = overlay.unwrap_or_else(|| {
         let mut name = image.as_os_str().to_os_string();
@@ -189,7 +219,7 @@ fn run() -> Result<(), String> {
         .read_to_end(&mut raw)
         .map_err(|e| e.to_string())?;
     let started = Instant::now();
-    let mut m = Machine::new(raw, extended, bits as u8, experimental, connect)?;
+    let mut m = Machine::with_config(raw, config)?;
     if expected.as_ref().is_some_and(|v| v != &m.image_sha256) {
         return Err("image SHA256 differs from expected value".into());
     }
@@ -207,7 +237,7 @@ fn run() -> Result<(), String> {
                 m.bus
                     .terminal
                     .send_key(keys[key_index].1)
-                    .map_err(|f| f.reason)?;
+                    .map_err(|f| f.reason().to_string())?;
                 key_index += 1;
             }
             m.step();
@@ -351,7 +381,7 @@ fn cpu_cases() -> Result<(), String> {
                     }
                 }
                 Err(f) => {
-                    reason = f.reason;
+                    reason = f.reason().to_string();
                     break;
                 }
             }

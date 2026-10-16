@@ -83,7 +83,7 @@ impl Terminal {
     }
     pub fn send_key(&mut self, value: u8) -> Result<(), Fault> {
         if !self.connected {
-            return Err(Fault::new("terminal is not connected"));
+            return Err(Fault::new(crate::FaultKind::TerminalIsNotConnected));
         }
         self.events.push_back([0x1000, value as u16, 0]);
         Ok(())
@@ -101,7 +101,7 @@ impl Terminal {
     fn capture(&mut self, raw: &[u8], packet: Value) -> Result<IoResult, Fault> {
         if self.display_bytes.len() + raw.len() > self.capture_limit {
             if !self.capture_tail {
-                return Err(Fault::new("terminal_capture_limit"));
+                return Err(Fault::new(crate::FaultKind::TerminalCaptureLimit));
             }
             let remove = (self.display_bytes.len() + raw.len() - self.capture_limit)
                 .min(self.display_bytes.len());
@@ -137,7 +137,7 @@ impl Terminal {
         }
         if value & 0xf800 != 0xe000 || value & 0x7ff == 0 {
             return Err(Fault::with(
-                "unsupported_terminal_dma_mode",
+                crate::FaultKind::UnsupportedTerminalDmaMode,
                 json!({"value":value}),
             ));
         }
@@ -145,13 +145,13 @@ impl Terminal {
         let start = self.dma.unwrap() as usize;
         let end = start + count.div_ceil(2);
         if end > memory.global_words {
-            return Err(Fault::new("terminal_dma_outside_shared_memory"));
+            return Err(Fault::new(crate::FaultKind::TerminalDmaOutsideSharedMemory));
         }
         let mut raw = Vec::with_capacity(count + 1);
         for address in start..end {
             let word = memory
                 .get(address)
-                .ok_or_else(|| Fault::new("terminal_dma_uninitialized"))?;
+                .ok_or_else(|| Fault::new(crate::FaultKind::TerminalDmaUninitialized))?;
             raw.extend_from_slice(&word.to_be_bytes());
         }
         raw.truncate(count);
@@ -170,7 +170,10 @@ impl Terminal {
         let details = json!({"operation":operation,"pulse":pulse,"value":value});
         if (operation, pulse) == (2, 3) {
             if self.values.len() >= 8 || value != self.values.len() as u16 * 128 {
-                return Err(Fault::with("unsupported_setup_operation", details));
+                return Err(Fault::with(
+                    crate::FaultKind::UnsupportedSetupOperation,
+                    details,
+                ));
             }
             self.values.push(value);
             return Ok(IoResult::default());
@@ -192,7 +195,10 @@ impl Terminal {
                     value: None,
                 });
             }
-            return Err(Fault::with("unsupported_terminal_operation", details));
+            return Err(Fault::with(
+                crate::FaultKind::UnsupportedTerminalOperation,
+                details,
+            ));
         }
         if operation == 7 && pulse < 4 {
             return Ok(IoResult {
@@ -209,7 +215,7 @@ impl Terminal {
             let event = self
                 .events
                 .front()
-                .ok_or_else(|| Fault::new("terminal_input_without_event"))?;
+                .ok_or_else(|| Fault::new(crate::FaultKind::TerminalInputWithoutEvent))?;
             let result = event[((operation - 1) / 2) as usize];
             if pulse == 2 {
                 self.events.pop_front();
@@ -241,7 +247,7 @@ impl Terminal {
                 || matches!(value & 0xf80f, 0xc000 | 0xc001);
             if !known {
                 return Err(Fault::with(
-                    "unsupported_terminal_command",
+                    crate::FaultKind::UnsupportedTerminalCommand,
                     json!({"command":value}),
                 ));
             }
@@ -279,14 +285,17 @@ impl Terminal {
                 self.mapping.insert(self.command.unwrap(), value);
             } else {
                 return Err(Fault::with(
-                    "unsupported_terminal_parameter",
+                    crate::FaultKind::UnsupportedTerminalParameter,
                     json!({"command":self.command,"value":value}),
                 ));
             }
             self.output("C", value);
             return Ok(IoResult::default());
         }
-        Err(Fault::with("unsupported_terminal_operation", details))
+        Err(Fault::with(
+            crate::FaultKind::UnsupportedTerminalOperation,
+            details,
+        ))
     }
     pub fn snapshot(&self) -> Value {
         if !self.experimental {
@@ -335,7 +344,7 @@ mod tests {
         t.capture(b"ABCD", json!({})).unwrap();
         t.events.clear();
         assert_eq!(
-            t.capture(b"EF", json!({})).unwrap_err().reason,
+            t.capture(b"EF", json!({})).unwrap_err().reason(),
             "terminal_capture_limit"
         );
         assert_eq!(t.total_display_bytes, 4);
@@ -357,7 +366,7 @@ mod tests {
         t.io(&m, 2, 0, 0).unwrap();
         t.io(&m, 4, 0, 200).unwrap();
         assert_eq!(
-            t.io(&m, 6, 0, 0xe004).unwrap_err().reason,
+            t.io(&m, 6, 0, 0xe004).unwrap_err().reason(),
             "terminal_dma_uninitialized"
         );
         assert!(t.events.is_empty());
@@ -407,7 +416,7 @@ mod tests {
             t.io(&m, 2, 3, n * 128).unwrap();
         }
         assert_eq!(
-            t.io(&m, 2, 3, 1024).unwrap_err().reason,
+            t.io(&m, 2, 3, 1024).unwrap_err().reason(),
             "unsupported_setup_operation"
         );
         t.io(&m, 2, 0, 0x780).unwrap();

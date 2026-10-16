@@ -31,7 +31,7 @@ impl Cpu {
     fn guard(&self, address: usize) -> Result<(), Fault> {
         if self.global_only && address >= self.memory.global_words {
             return Err(Fault::with(
-                "unmapped_memory_bank",
+                crate::FaultKind::UnmappedMemoryBank,
                 json!({"address":address,"selector":65535}),
             ));
         }
@@ -46,7 +46,7 @@ impl Cpu {
                     "bank":if address >= self.memory.global_words {Some(self.memory.bank)} else {None},
                     "physical_word":self.memory.physical(address)});
             }
-            Fault::with("uninitialized_memory",details)
+            Fault::with(crate::FaultKind::UninitializedMemory,details)
         })
     }
     pub fn write(&mut self, address: usize, value: u16) -> Result<(), Fault> {
@@ -88,7 +88,7 @@ impl Cpu {
                 }
             }
             return Err(Fault::with(
-                "indirect_limit",
+                crate::FaultKind::IndirectLimit,
                 json!({"address":address,"limit":256}),
             ));
         }
@@ -102,7 +102,7 @@ impl Cpu {
             || source + count > self.memory.logical_words
         {
             return Err(Fault::with(
-                "block_move_bounds",
+                crate::FaultKind::BlockMoveBounds,
                 json!({"source":source,"destination":destination,"words":count}),
             ));
         }
@@ -118,7 +118,7 @@ impl Cpu {
             bank = (self.read(2)? >> 8) as usize;
             if bank >= self.memory.banks {
                 return Err(Fault::with(
-                    "unsupported_move_source_bank",
+                    crate::FaultKind::UnsupportedMoveSourceBank,
                     json!({"bank":bank}),
                 ));
             }
@@ -137,7 +137,7 @@ impl Cpu {
                 None if !extended => self.read(address)?,
                 None => self.memory.storage[physical].ok_or_else(|| {
                     Fault::with(
-                        "uninitialized_memory",
+                        crate::FaultKind::UninitializedMemory,
                         json!({"address":address,"bank":bank,"physical_word":physical}),
                     )
                 })?,
@@ -159,7 +159,7 @@ impl Cpu {
         let high = self.read((self.ac[2].wrapping_sub(67) & self.memory.mask) as usize)?;
         if high & !1 != 0 {
             return Err(Fault::with(
-                "unsupported_byte_descriptor",
+                crate::FaultKind::UnsupportedByteDescriptor,
                 json!({"low":low,"high":high}),
             ));
         }
@@ -208,7 +208,7 @@ impl Cpu {
             self.byte_field(word)?;
         } else if word & 0x8000 != 0 {
             if bus.extended && word & 15 == 8 {
-                return Err(Fault::new("unsupported_rocc_instruction"));
+                return Err(Fault::new(crate::FaultKind::UnsupportedRoccInstruction));
             }
             let source = ((word >> 13) & 3) as usize;
             let dest = ((word >> 11) & 3) as usize;
@@ -295,9 +295,12 @@ impl Cpu {
                 self.ac[accumulator],
             )?;
             if matches!(operation, 1 | 3 | 5) {
-                self.ac[accumulator] = result
-                    .value
-                    .ok_or_else(|| Fault::with("missing_device_input", json!({"device":number})))?;
+                self.ac[accumulator] = result.value.ok_or_else(|| {
+                    Fault::with(
+                        crate::FaultKind::MissingDeviceInput,
+                        json!({"device":number}),
+                    )
+                })?;
             }
             if result.skip {
                 next_pc = next_pc.wrapping_add(1) & self.memory.mask;
@@ -364,7 +367,7 @@ mod tests {
         let (mut c, mut b) = setup(true, 0x8208);
         c.ac = [200, 300, 0, 2];
         c.memory.set(300, 7);
-        assert_eq!(c.step(&mut b).unwrap_err().reason, "uninitialized_memory");
+        assert_eq!(c.step(&mut b).unwrap_err().reason(), "uninitialized_memory");
         assert_eq!(c.memory.get(200), None);
         assert_eq!(c.pc, 100);
         c.ac = [0xf000, 0xf000, 0, 1];
@@ -390,10 +393,10 @@ mod tests {
         c.step(&mut b).unwrap();
         assert_eq!(c.memory.get(300), Some(0xab12));
         c.global_only = true;
-        assert_eq!(c.read(0xf000).unwrap_err().reason, "unmapped_memory_bank");
+        assert_eq!(c.read(0xf000).unwrap_err().reason(), "unmapped_memory_bank");
         c.memory.set(102, 0x8008);
         assert_eq!(
-            c.step(&mut b).unwrap_err().reason,
+            c.step(&mut b).unwrap_err().reason(),
             "unsupported_rocc_instruction"
         );
     }
