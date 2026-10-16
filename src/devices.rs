@@ -39,6 +39,13 @@ pub struct Disk {
     completion: DiskCompletion,
 }
 impl Disk {
+    #[allow(dead_code)] // Used by the boot attachment task.
+    pub(crate) fn overlay_identity(&self) -> Result<crate::persistence::FileIdentity, String> {
+        self.journal
+            .as_ref()
+            .ok_or_else(|| "memory persistence requires an attached disk overlay".to_owned())?
+            .identity()
+    }
     pub fn new(base: Vec<u8>) -> Self {
         Self {
             base,

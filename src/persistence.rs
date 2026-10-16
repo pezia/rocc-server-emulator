@@ -6,6 +6,11 @@ use std::path::PathBuf;
 
 const MAGIC: &[u8; 8] = b"ROCCRAM1";
 const HEADER: usize = 160;
+mod session;
+#[allow(unused_imports)] // Boot attachment consumes these in the next task.
+pub(crate) use session::{FileIdentity, MemorySession, ProtectedPaths};
+#[cfg(test)]
+use session::{SaveStage, FAIL};
 
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct MemoryStatus {
@@ -129,7 +134,7 @@ pub(crate) fn decode_snapshot(
 mod tests {
     use super::*;
     use crate::{config::*, memory::Memory};
-    fn fixture() -> (Memory, SnapshotIdentity) {
+    pub(super) fn fixture() -> (Memory, SnapshotIdentity) {
         let config = MachineConfig::new(
             CpuProfile::Extended,
             16,
@@ -219,3 +224,6 @@ mod tests {
         assert!(encode_snapshot(&memory, &invalid).is_err());
     }
 }
+
+#[cfg(test)]
+mod session_tests;

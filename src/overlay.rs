@@ -22,6 +22,13 @@ pub(crate) struct OverlayFile {
 }
 
 impl OverlayFile {
+    #[allow(dead_code)] // Used by the boot attachment task.
+    pub(crate) fn identity(&self) -> Result<crate::persistence::FileIdentity, String> {
+        self.file
+            .metadata()
+            .map(|m| crate::persistence::FileIdentity::from(&m))
+            .map_err(|e| e.to_string())
+    }
     pub(crate) fn open(path: &Path, image: &File, base: &[u8]) -> Result<(Self, Blocks), String> {
         Self::open_inner(path, image, base, true)
             .map_err(|e| format!("overlay {}: {e}", path.display()))
