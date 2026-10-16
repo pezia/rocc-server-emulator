@@ -20,7 +20,11 @@ machine photos and real-system screenshots. See the
 ## Build and run
 
 Requires Rust 1.87 or later and a C linker. Interactive mode requires a POSIX
-terminal at least 80 columns wide and 24 rows high.
+terminal at least 80 columns wide and 25 rows high. The guest keeps its fixed
+24-row display; the reserved bottom row shows disk read/write activity and tape
+mode, activity and record position. Green indicates reads, amber writes, cyan
+controller/motion activity, gray idle/offline, and red errors. Activity remains
+visible for 200 ms. Keyboard notices temporarily use the same footer.
 
 ```sh
 cargo build --release --locked

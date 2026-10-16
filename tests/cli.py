@@ -378,10 +378,16 @@ class CliTests(unittest.TestCase):
                 fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,80,0,0))
                 original=termios.tcgetattr(slave)
                 p=subprocess.Popen([BINARY,image,'--interactive','--report',report],stdin=slave,stdout=slave,stderr=slave)
-                out=bytearray();sent=False;deadline=time.monotonic()+10
+                out=bytearray();sent=False;resized=False;deadline=time.monotonic()+10
                 while p.poll() is None and time.monotonic()<deadline:
                     if select.select([master],[],[],.05)[0]:out.extend(os.read(master,65536))
-                    if not sent and b'Booting guest' in out:os.write(master,b'\x1d');sent=True
+                    if not resized and b'80 columns x 25 rows' in out:
+                        self.assertNotIn(b'Booting guest',out)
+                        fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',25,80,0,0));resized=True
+                    if not sent and b'Booting guest' in out and b'TAPE --- OFF' in out:
+                        self.assertIn(b'DISK IDLE',out);self.assertIn(b'TAPE --- OFF',out)
+                        self.assertIn(b'\x1b[25;1H',out);self.assertIn(b'\x1b[38;5;244m',out)
+                        os.write(master,b'\x1d');sent=True
                 self.assertTrue(sent,repr(out[-500:]));self.assertEqual(p.poll(),0,repr(out[-500:]))
                 self.assertEqual(termios.tcgetattr(slave),original)
                 self.assertEqual(json.loads(report.read_text())['reason'],'user_exit')
@@ -394,7 +400,7 @@ class CliTests(unittest.TestCase):
             image=Path(tmp)/'disk';raw=bytearray(6144);raw[254:256]=b'\x00\xc8';image.write_bytes(raw)
             master,slave=pty.openpty()
             try:
-                fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,80,0,0))
+                fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',25,80,0,0))
                 original=termios.tcgetattr(slave)
                 p=subprocess.Popen([BINARY,image,'--interactive'],stdin=slave,stdout=slave,stderr=slave)
                 p.wait(timeout=10)
@@ -408,7 +414,7 @@ class CliTests(unittest.TestCase):
                 tape=Path(tmp)/'mounted.tap';tape.write_bytes(bytes(4))
                 master,slave=pty.openpty();p=None
                 try:
-                    fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,80,0,0))
+                    fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',25,80,0,0))
                     original=termios.tcgetattr(slave)
                     p=subprocess.Popen([BINARY,image,'--interactive','--tape',tape,'--report',report],stdin=slave,stdout=slave,stderr=slave)
                     out=bytearray();deadline=time.monotonic()+5
@@ -497,7 +503,7 @@ class CliTests(unittest.TestCase):
             for address,word in {127:0,0:0x2064,1:0x6228,2:0x6428,3:0x2065,4:0x6628,5:5,100:0,101:65}.items():raw[2*address:2*address+2]=word.to_bytes(2,'big')
             image.write_bytes(raw);report=Path(tmp)/'report';master,slave=pty.openpty();p=None;original=termios.tcgetattr(slave)
             try:
-                fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,80,0,0))
+                fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',25,80,0,0))
                 p=subprocess.Popen([BINARY,image,'--interactive','--connect-after','1','--event-limit','2','--report',report],stdin=slave,stdout=slave,stderr=slave)
                 out=bytearray();deadline=time.monotonic()+5
                 while b'\x1b[1;1HA' not in out and p.poll() is None and time.monotonic()<deadline:

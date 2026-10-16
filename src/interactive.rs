@@ -537,17 +537,24 @@ fn put(out: &mut String, row: usize, col: usize, text: &str, height: usize, widt
         available.saturating_sub(text.len()),
     ));
 }
-fn render_frame(machine: &Machine, k: &Keyboard, now: u64, height: usize, width: usize) -> String {
+fn render_frame(
+    machine: &Machine,
+    k: &Keyboard,
+    lights: &DeviceLights,
+    now: u64,
+    height: usize,
+    width: usize,
+) -> String {
     let terminal = &machine.bus.terminal;
     let screen = &terminal.screen;
-    let usable = height >= 24 && width >= 80;
+    let usable = height >= 25 && width >= 80;
     let mut out = String::from("\x1b[?25l\x1b[0m\x1b[?7l");
     if !usable {
         put(
             &mut out,
             0,
             0,
-            "Resize to at least 80 columns x 24 rows. Ctrl-] exits.",
+            "Resize to at least 80 columns x 25 rows. Ctrl-] exits.",
             height,
             width,
         );
@@ -597,29 +604,12 @@ fn render_frame(machine: &Machine, k: &Keyboard, now: u64, height: usize, width:
             out.push_str("\x1b[0m");
         }
     }
-    // Guest repaint covers this row; boot/resize messages otherwise leave an
-    // expired notice behind now that normal frames no longer clear the display.
-    if height == 24 && (!usable || terminal.total_display_bytes == 0) {
-        put(&mut out, 23, 0, "", height, width);
-    }
-    if height == 24 && !k.notice.is_empty() && now.saturating_sub(k.notice_time) < 3000 {
-        out.push_str("\x1b[7m");
-        put(
-            &mut out,
-            23,
-            0,
-            &format!("{:<79}", k.notice),
-            height,
-            width.min(79),
-        );
-        out.push_str("\x1b[0m");
-    } else if height > 24 {
-        let status = if k.notice.is_empty() || now.saturating_sub(k.notice_time) >= 3000 {
-            "Ctrl-] exits | Original disk unchanged; session writes are private"
+    if usable {
+        if !k.notice.is_empty() && now.saturating_sub(k.notice_time) < 3000 {
+            put(&mut out, 24, 0, &k.notice, height, width.saturating_sub(1));
         } else {
-            &k.notice
-        };
-        put(&mut out, 24, 0, status, height, width.saturating_sub(1));
+            lights.paint(&mut out, machine, now, height, width);
+        }
     }
     if usable && terminal.total_display_bytes > 0 {
         out.push_str(&format!(
@@ -664,7 +654,7 @@ pub fn run(
     k.bindings = bindings;
     let mut unknown = 0;
     let (mut height, mut width) = size()?;
-    let mut usable = height >= 24 && width >= 80;
+    let mut usable = height >= 25 && width >= 80;
     let mut renderer = FrameRenderer::default();
     renderer.draw(machine, &k, 0, height, width)?;
     let mut last_draw = Instant::now();
@@ -681,7 +671,7 @@ pub fn run(
         if machine.steps >= next_poll {
             next_poll = machine.steps.saturating_add(2048);
             (height, width) = size()?;
-            usable = height >= 24 && width >= 80;
+            usable = height >= 25 && width >= 80;
             let now = start.elapsed().as_millis() as u64;
             // Poll never blocks the guest, and VMIN=0 makes reads bounded.
             let mut descriptor = libc::pollfd {
@@ -779,7 +769,145 @@ pub fn run(
 }
 
 #[derive(Default)]
+struct ActivityLamp {
+    label: Option<&'static str>,
+    until: u64,
+}
+impl ActivityLamp {
+    fn flash(&mut self, label: &'static str, now: u64) {
+        self.label = Some(label);
+        self.until = now.saturating_add(200);
+    }
+    fn label(&self, now: u64) -> &'static str {
+        if now < self.until {
+            self.label.unwrap_or("IDLE")
+        } else {
+            "IDLE"
+        }
+    }
+}
+#[derive(Default)]
+struct DeviceLights {
+    disk_totals: (u64, u64, u64),
+    tape_generation: u64,
+    disk: ActivityLamp,
+    tape: ActivityLamp,
+}
+impl DeviceLights {
+    fn update(&mut self, machine: &Machine, now: u64) {
+        let disk = &machine.bus.disk;
+        let totals = (disk.reads, disk.writes, disk.controls);
+        let read = totals.0 != self.disk_totals.0;
+        let write = totals.1 != self.disk_totals.1;
+        if read || write || totals.2 != self.disk_totals.2 {
+            self.disk.flash(
+                match (read, write) {
+                    (true, true) => "R/W",
+                    (true, false) => "READ",
+                    (false, true) => "WRITE",
+                    _ => "CTRL",
+                },
+                now,
+            );
+        }
+        self.disk_totals = totals;
+        if let Some(tape) = &machine.bus.tape {
+            let (generation, label) = tape.activity();
+            if generation != self.tape_generation {
+                self.tape.flash(label, now);
+            }
+            self.tape_generation = generation;
+        }
+    }
+    fn paint(&self, out: &mut String, machine: &Machine, now: u64, height: usize, width: usize) {
+        fn color(label: &str) -> u8 {
+            match label {
+                "READ" => 46,
+                "WRITE" | "R/W" | "MARK" | "ERASE" => 208,
+                "ERROR" => 196,
+                "IDLE" | "OFF" => 244,
+                _ => 45,
+            }
+        }
+        fn count(value: u64) -> String {
+            if value > 999_999 {
+                "99999+".into()
+            } else {
+                format!("{value:>6}")
+            }
+        }
+        let disk = &machine.bus.disk;
+        let disk_label = if machine
+            .reason
+            .as_deref()
+            .is_some_and(|r| r.contains("disk"))
+        {
+            "ERROR"
+        } else if disk.busy {
+            "BUSY"
+        } else {
+            self.disk.label(now)
+        };
+        out.push_str(&format!("\x1b[38;5;{}m", color(disk_label)));
+        put(
+            out,
+            24,
+            0,
+            &format!(
+                "DISK {disk_label:<6} R:{} W:{}",
+                count(disk.reads),
+                count(disk.writes)
+            ),
+            height,
+            32,
+        );
+        let (mode, label, position, objects) = match &machine.bus.tape {
+            Some(tape) => {
+                let status = tape.status();
+                let label = if status.error.is_some() {
+                    "ERROR"
+                } else if tape.busy {
+                    "BUSY"
+                } else {
+                    self.tape.label(now)
+                };
+                (
+                    if status.mode == "read_only" {
+                        "RO"
+                    } else {
+                        "RW"
+                    },
+                    label,
+                    status.position,
+                    status.records + status.marks,
+                )
+            }
+            None => ("---", "OFF", 0, 0),
+        };
+        out.push_str(&format!("\x1b[38;5;{}m", color(label)));
+        put(
+            out,
+            24,
+            32,
+            &format!("TAPE {mode:<3} {label:<6} {position:>6}/{objects:>6}"),
+            height,
+            62,
+        );
+        out.push_str("\x1b[0m");
+        put(
+            out,
+            24,
+            62,
+            " | Ctrl-] exits",
+            height,
+            width.saturating_sub(1),
+        );
+    }
+}
+
+#[derive(Default)]
 struct FrameRenderer {
+    lights: DeviceLights,
     previous: String,
     size: Option<(usize, usize)>,
 }
@@ -792,7 +920,8 @@ impl FrameRenderer {
         height: usize,
         width: usize,
     ) -> String {
-        let frame = render_frame(machine, keyboard, now, height, width);
+        self.lights.update(machine, now);
+        let frame = render_frame(machine, keyboard, &self.lights, now, height, width);
         let resized = self.size != Some((height, width));
         if !resized && frame == self.previous {
             return String::new();
@@ -824,10 +953,31 @@ impl FrameRenderer {
 #[cfg(test)]
 mod renderer_tests {
     use super::*;
+    mod fixture {
+        use crate as rocc_emulator;
+        include!("../tests/common/tape.rs");
+    }
     fn machine() -> Machine {
         let mut machine = Machine::new(vec![0; 6144], true, 16, true, None).unwrap();
         machine.bus.terminal.total_display_bytes = 1;
         machine
+    }
+    fn plain(frame: &str) -> String {
+        let mut text = String::new();
+        let mut chars = frame.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c == '\x1b' && chars.peek() == Some(&'[') {
+                chars.next();
+                for c in chars.by_ref() {
+                    if ('@'..='~').contains(&c) {
+                        break;
+                    }
+                }
+            } else {
+                text.push(c);
+            }
+        }
+        text
     }
     #[test]
     fn unchanged_screen_emits_nothing_and_changed_screen_does_not_clear() {
@@ -835,69 +985,194 @@ mod renderer_tests {
         let keyboard = Keyboard::new();
         let mut renderer = FrameRenderer::default();
         assert!(renderer
-            .frame(&machine, &keyboard, 0, 24, 80)
+            .frame(&machine, &keyboard, 0, 25, 80)
             .contains("\x1b[2J"));
-        assert_eq!(renderer.frame(&machine, &keyboard, 50, 24, 80), "");
+        assert_eq!(renderer.frame(&machine, &keyboard, 50, 25, 80), "");
         machine.bus.terminal.screen.cells[0][0] = b'X';
-        let changed = renderer.frame(&machine, &keyboard, 100, 24, 80);
+        let changed = renderer.frame(&machine, &keyboard, 100, 25, 80);
         assert!(!changed.is_empty());
         assert!(!changed.contains("\x1b[2J"));
         assert!(renderer
-            .frame(&machine, &keyboard, 150, 25, 81)
+            .frame(&machine, &keyboard, 150, 26, 81)
             .contains("\x1b[2J"));
     }
     #[test]
-    fn bottom_right_is_painted_with_wrapping_disabled_and_guest_cursor_restored() {
+    fn fixed_footer_preserves_guest_bottom_row_and_cursor() {
         let mut machine = machine();
         machine.bus.terminal.screen.cells[23][79] = b'Z';
         machine.bus.terminal.screen.row = 3;
         machine.bus.terminal.screen.column = 4;
-        let frame = FrameRenderer::default().frame(&machine, &Keyboard::new(), 0, 24, 80);
-        let start = frame
-            .find("\x1b[?7l")
-            .expect("disable wrap before painting");
-        let end = frame.find("\x1b[?7h").expect("restore wrap after painting");
+        let frame = FrameRenderer::default().frame(&machine, &Keyboard::new(), 0, 25, 80);
+        let start = frame.find("\x1b[?7l").unwrap();
+        let end = frame.find("\x1b[?7h").unwrap();
         let bottom = frame.find('Z').unwrap();
-        assert!(start < bottom && bottom < end);
+        let footer = frame.find("\x1b[25;1H").unwrap();
+        assert!(start < bottom && bottom < footer && footer < end);
         assert!(frame.contains("\x1b[4;5H\x1b[?25h"));
+        assert!(plain(&frame).contains("DISK IDLE"));
+        assert!(plain(&frame).contains("TAPE --- OFF"));
     }
     #[test]
-    fn expired_notice_is_erased_even_when_host_is_too_narrow() {
-        let machine = machine();
-        let mut keyboard = Keyboard::new();
-        keyboard.notify("Temporary notice", 0);
+    fn disk_activity_is_visible_for_200ms_and_fields_never_move() {
+        let mut machine = machine();
+        let keyboard = Keyboard::new();
         let mut renderer = FrameRenderer::default();
-        renderer.frame(&machine, &keyboard, 0, 24, 70);
-        let expired = renderer.frame(&machine, &keyboard, 3000, 24, 70);
-        assert!(expired.contains(&format!("\x1b[24;1H{}", " ".repeat(70))));
+        renderer.frame(&machine, &keyboard, 0, 25, 80);
+        machine.bus.disk.reads = 1;
+        let read = renderer.frame(&machine, &keyboard, 50, 25, 80);
+        assert!(plain(&read).contains("DISK READ"));
+        assert!(read.contains("38;5;46m"));
+        assert!(renderer.frame(&machine, &keyboard, 249, 25, 80).is_empty());
+        let idle = renderer.frame(&machine, &keyboard, 250, 25, 80);
+        assert!(plain(&idle).contains("DISK IDLE"));
+        machine.bus.disk.writes = u64::MAX;
+        let write = renderer.frame(&machine, &keyboard, 300, 25, 80);
+        assert!(plain(&write).contains("DISK WRITE"));
+        assert!(write.contains("38;5;208m"));
+        // Even counter overflow cannot shift the tape field or guest cursor.
+        assert_eq!(plain(&read).find("TAPE"), plain(&write).find("TAPE"));
+        assert!(!write.contains("\x1b[2J"));
     }
     #[test]
-    fn tall_terminal_notice_expires_back_to_normal_status() {
-        let machine = machine();
-        let mut keyboard = Keyboard::new();
+    fn tape_motion_survives_polling_and_errors_are_red() {
+        let f = fixture::Fixture::new();
+        let (mut machine, _image) = f.machine();
+        machine.bus.terminal.total_display_bytes = 1;
+        machine
+            .attach_tape(
+                crate::tape::TapeMount::CreateNew(f.dir.join("reel")),
+                &f.image,
+                &f.overlay,
+                None,
+            )
+            .unwrap();
+        let keyboard = Keyboard::new();
         let mut renderer = FrameRenderer::default();
-        keyboard.notify("Temporary status", 5);
-        assert!(renderer
-            .frame(&machine, &keyboard, 3004, 25, 80)
-            .contains("Temporary status"));
-        let expired = renderer.frame(&machine, &keyboard, 3005, 25, 80);
-        assert!(!expired.contains("Temporary status"));
-        assert!(expired.contains("Ctrl-] exits | Original disk unchanged"));
+        renderer.frame(&machine, &keyboard, 0, 25, 80);
+        machine
+            .bus
+            .io(&mut machine.cpu.memory, 0o20, 2, 1, 8)
+            .unwrap();
+        machine
+            .bus
+            .tape
+            .as_mut()
+            .unwrap()
+            .tick(&mut machine.cpu.memory)
+            .unwrap();
+        for _ in 0..300 {
+            machine
+                .bus
+                .io(&mut machine.cpu.memory, 0o20, 1, 0, 0)
+                .unwrap();
+        }
+        let rewind = renderer.frame(&machine, &keyboard, 50, 25, 80);
+        assert!(plain(&rewind).contains("TAPE RW  REWIND"));
+        machine
+            .bus
+            .io(&mut machine.cpu.memory, 0o20, 2, 1, 0x18)
+            .unwrap();
+        machine
+            .bus
+            .tape
+            .as_mut()
+            .unwrap()
+            .tick(&mut machine.cpu.memory)
+            .unwrap();
+        assert!(plain(&renderer.frame(&machine, &keyboard, 100, 25, 80)).contains("TAPE RW  SPACE"));
+        machine
+            .bus
+            .io(&mut machine.cpu.memory, 0o20, 2, 0, 0x28)
+            .unwrap();
+        machine
+            .bus
+            .io(&mut machine.cpu.memory, 0o20, 4, 0, 300)
+            .unwrap();
+        machine
+            .bus
+            .io(&mut machine.cpu.memory, 0o20, 6, 1, 0xffff)
+            .unwrap();
+        assert!(machine
+            .bus
+            .tape
+            .as_mut()
+            .unwrap()
+            .tick(&mut machine.cpu.memory)
+            .is_err());
+        let error = renderer.frame(&machine, &keyboard, 150, 25, 80);
+        assert!(plain(&error).contains("TAPE RW  ERROR"));
+        assert!(error.contains("38;5;196m"));
     }
     #[test]
-    fn shorter_status_and_expired_overlay_erase_previous_text_and_attributes() {
+    fn readonly_tape_read_updates_position_without_moving_footer() {
+        let f = fixture::Fixture::new();
+        let (mut machine, _image) = f.machine();
+        let reel = f.dir.join("reel");
+        std::fs::write(&reel, [2, 0, 0, 0, 0x12, 0x34, 2, 0, 0, 0, 0, 0, 0, 0]).unwrap();
+        machine
+            .attach_tape(
+                crate::tape::TapeMount::ReadOnly(reel),
+                &f.image,
+                &f.overlay,
+                None,
+            )
+            .unwrap();
+        let mut renderer = FrameRenderer::default();
+        let keyboard = Keyboard::new();
+        let boot = renderer.frame(&machine, &keyboard, 0, 25, 80);
+        assert!(plain(&boot).contains("TAPE RO  IDLE"));
+        machine
+            .bus
+            .io(&mut machine.cpu.memory, 0o20, 2, 0, 0)
+            .unwrap();
+        machine
+            .bus
+            .io(&mut machine.cpu.memory, 0o20, 4, 0, 300)
+            .unwrap();
+        machine
+            .bus
+            .io(&mut machine.cpu.memory, 0o20, 6, 1, 0xffff)
+            .unwrap();
+        machine
+            .bus
+            .tape
+            .as_mut()
+            .unwrap()
+            .tick(&mut machine.cpu.memory)
+            .unwrap();
+        let read = renderer.frame(&machine, &keyboard, 50, 25, 80);
+        assert!(plain(&read).contains("TAPE RO  READ"));
+        assert!(plain(&read).contains("     1/     2"));
+        assert!(boot.contains("\x1b[25;1H"));
+        assert!(read.contains("\x1b[25;1H"));
+    }
+    #[test]
+    fn undersized_terminal_pauses_guest_display_and_resize_restores_footer() {
+        let machine = machine();
+        let keyboard = Keyboard::new();
+        let mut renderer = FrameRenderer::default();
+        let small = renderer.frame(&machine, &keyboard, 0, 24, 80);
+        assert!(small.contains("80 columns x 25 rows"));
+        assert!(!small.contains("TAPE"));
+        let normal = renderer.frame(&machine, &keyboard, 50, 25, 80);
+        assert!(normal.contains("\x1b[2J"));
+        assert!(plain(&normal).contains("DISK"));
+    }
+    #[test]
+    fn notices_expire_back_to_device_footer_without_touching_guest_rows() {
         let machine = machine();
         let mut keyboard = Keyboard::new();
         let mut renderer = FrameRenderer::default();
         keyboard.notify("A long notice to erase", 0);
-        renderer.frame(&machine, &keyboard, 0, 25, 80);
+        assert!(renderer
+            .frame(&machine, &keyboard, 0, 25, 80)
+            .contains("A long notice to erase"));
         keyboard.notify("Short", 1);
         let short = renderer.frame(&machine, &keyboard, 1, 25, 80);
         assert!(short.contains(&format!("\x1b[25;1H{:<79}", "Short")));
-        renderer.frame(&machine, &keyboard, 1, 24, 80);
-        let expired = renderer.frame(&machine, &keyboard, 3001, 24, 80);
+        let expired = renderer.frame(&machine, &keyboard, 3001, 25, 80);
         assert!(!expired.contains("Short"));
-        assert!(expired.contains("\x1b[24;1H"));
-        assert!(!expired.contains("\x1b[7m"));
+        assert!(plain(&expired).contains("DISK IDLE"));
+        assert!(!expired.contains("\x1b[2J"));
     }
 }
