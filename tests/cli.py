@@ -282,4 +282,34 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(p.returncode,0,p.stderr)
                 self.assertEqual(report.stat().st_mode&0o777,0o600)
 
+    def test_compaction_preserves_source_and_boot_state(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            image=Path(tmp)/'disk';image.write_bytes(writing_image());p=self.boot(image);self.assertEqual(p.returncode,0,p.stderr)
+            source=Path(str(image)+'.overlay');saved=source.read_bytes();source.write_bytes(saved+saved[48:]*3+b'partial')
+            before=source.read_bytes();dest=Path(tmp)/'compact'
+            p=subprocess.run([BINARY,'compact-overlay',image,'--overlay',source,'--output',dest],capture_output=True,text=True,timeout=15)
+            self.assertEqual(p.returncode,0,p.stderr);self.assertEqual(source.read_bytes(),before);self.assertEqual(image.read_bytes(),writing_image())
+            self.assertEqual(dest.stat().st_size,48+296);self.assertEqual(dest.stat().st_mode&0o777,0o600)
+            report=Path(tmp)/'report';p=self.boot(image,'--overlay',dest,'--report',report);self.assertEqual(p.returncode,0,p.stderr);self.assertEqual(json.loads(report.read_text())['steps'],2)
+
+    def test_compaction_honors_lock_and_rejects_aliases(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            image=Path(tmp)/'disk';image.write_bytes(writing_image());self.assertEqual(self.boot(image).returncode,0)
+            source=Path(str(image)+'.overlay');before=source.read_bytes();dest=Path(tmp)/'new'
+            with source.open('rb') as f:
+                fcntl.flock(f,fcntl.LOCK_EX|fcntl.LOCK_NB)
+                p=subprocess.run([BINARY,'compact-overlay',image,'--overlay',source,'--output',dest],capture_output=True,timeout=15)
+                self.assertNotEqual(p.returncode,0);self.assertFalse(dest.exists())
+            for out in (source,image):
+                p=subprocess.run([BINARY,'compact-overlay',image,'--overlay',source,'--output',out],capture_output=True,timeout=15)
+                self.assertNotEqual(p.returncode,0)
+            self.assertEqual(source.read_bytes(),before);self.assertEqual(image.read_bytes(),writing_image())
+
+    def test_compaction_rejects_corrupt_source_without_output(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            image=Path(tmp)/'disk';image.write_bytes(writing_image());self.assertEqual(self.boot(image).returncode,0)
+            source=Path(str(image)+'.overlay');raw=bytearray(source.read_bytes());raw[-1]^=1;source.write_bytes(raw);dest=Path(tmp)/'new'
+            p=subprocess.run([BINARY,'compact-overlay',image,'--overlay',source,'--output',dest],capture_output=True,timeout=15)
+            self.assertNotEqual(p.returncode,0);self.assertFalse(dest.exists());self.assertEqual(source.read_bytes(),raw)
+
 if __name__=='__main__':unittest.main()

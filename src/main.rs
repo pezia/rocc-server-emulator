@@ -55,6 +55,32 @@ fn run() -> Result<i32, String> {
         help();
         return Ok(0);
     }
+    if args.peek().map(String::as_str) == Some("compact-overlay") {
+        args.next();
+        let image = PathBuf::from(args.next().ok_or("compact-overlay requires IMAGE")?);
+        let (mut source, mut output) = (None, None);
+        while let Some(arg) = args.next() {
+            let value = PathBuf::from(
+                args.next()
+                    .ok_or_else(|| format!("missing value for {arg}"))?,
+            );
+            match arg.as_str() {
+                "--overlay" if source.is_none() => source = Some(value),
+                "--output" if output.is_none() => output = Some(value),
+                _ => return Err(format!("unknown or duplicate compaction option: {arg}")),
+            }
+        }
+        let summary = rocc_emulator::compact_overlay(
+            &image,
+            &source.ok_or("compact-overlay requires --overlay SOURCE")?,
+            &output.ok_or("compact-overlay requires --output NEWPATH")?,
+        )?;
+        println!(
+            "Compacted {} bytes to {} bytes ({} blocks). Source overlay and base image unchanged.",
+            summary.original_bytes, summary.compacted_bytes, summary.blocks
+        );
+        return Ok(0);
+    }
     if args.peek().map(String::as_str) == Some("cpu-cases") {
         args.next();
         if args.next().is_some() {

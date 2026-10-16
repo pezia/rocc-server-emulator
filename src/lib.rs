@@ -22,3 +22,5 @@ mod signals;
 pub mod artifact;
 
 pub mod report;
+
+pub use overlay::{compact_overlay, CompactionSummary};
