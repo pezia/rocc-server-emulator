@@ -476,6 +476,27 @@ impl Terminal {
     }
 }
 
+pub struct DisplayExport<'a>(&'a Terminal);
+impl serde::Serialize for DisplayExport<'_> {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        let t = self.0;
+        let mut m = s.serialize_map(None)?;
+        m.serialize_entry("packets", &t.packets)?;
+        m.serialize_entry("screen", &t.screen.snapshot())?;
+        m.serialize_entry("capture_truncated", &t.capture_truncated)?;
+        m.serialize_entry("byte_history_truncated", &t.byte_history_truncated)?;
+        m.serialize_entry("packet_history_truncated", &t.packet_history_truncated)?;
+        m.serialize_entry("total_bytes", &t.total_display_bytes)?;
+        m.serialize_entry("connect_after", &t.connect_after)?;
+        m.serialize_entry("sha256", &t.retained_sha256())?;
+        m.serialize_entry("retained_sha256", &t.retained_sha256())?;
+        m.serialize_entry("full_stream_sha256", &t.full_stream_sha256())?;
+        m.serialize_entry("digest_scope",&"sha256 and retained_sha256 cover retained bytes; full_stream_sha256 covers all output bytes")?;
+        m.end()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -592,26 +613,5 @@ mod tests {
         t.io(&m, 0, 1, 0).unwrap();
         assert!(!t.io(&m, 7, 2, 0).unwrap().skip);
         assert!(t.io(&m, 2, 0, 0xe000).is_err());
-    }
-}
-
-pub struct DisplayExport<'a>(&'a Terminal);
-impl serde::Serialize for DisplayExport<'_> {
-    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        use serde::ser::SerializeMap;
-        let t = self.0;
-        let mut m = s.serialize_map(None)?;
-        m.serialize_entry("packets", &t.packets)?;
-        m.serialize_entry("screen", &t.screen.snapshot())?;
-        m.serialize_entry("capture_truncated", &t.capture_truncated)?;
-        m.serialize_entry("byte_history_truncated", &t.byte_history_truncated)?;
-        m.serialize_entry("packet_history_truncated", &t.packet_history_truncated)?;
-        m.serialize_entry("total_bytes", &t.total_display_bytes)?;
-        m.serialize_entry("connect_after", &t.connect_after)?;
-        m.serialize_entry("sha256", &t.retained_sha256())?;
-        m.serialize_entry("retained_sha256", &t.retained_sha256())?;
-        m.serialize_entry("full_stream_sha256", &t.full_stream_sha256())?;
-        m.serialize_entry("digest_scope",&"sha256 and retained_sha256 cover retained bytes; full_stream_sha256 covers all output bytes")?;
-        m.end()
     }
 }

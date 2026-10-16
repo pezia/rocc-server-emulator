@@ -1,4 +1,25 @@
-//! Inferred controllers with strict validation of unsupported operations.
+#[derive(Debug, Clone, Copy)]
+enum DiskCompletion {
+    Idle,
+    Control { end: Option<u16> },
+    Transfer { end: u16 },
+}
+impl DiskCompletion {
+    fn end(self) -> Option<u16> {
+        match self {
+            Self::Idle => None,
+            Self::Control { end } => end,
+            Self::Transfer { end } => Some(end),
+        }
+    }
+    fn without_control(self) -> Self {
+        match self.end() {
+            Some(end) => Self::Transfer { end },
+            None => Self::Idle,
+        }
+    }
+}
+// Inferred controllers with strict validation of unsupported operations.
 use crate::{memory::Memory, terminal::Terminal, Fault, IoResult};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
@@ -15,8 +36,7 @@ pub struct Disk {
     pub reads: u64,
     pub writes: u64,
     pub controls: u64,
-    dma_end: Option<u16>,
-    control_active: bool,
+    completion: DiskCompletion,
 }
 impl Disk {
     pub fn new(base: Vec<u8>) -> Self {
@@ -32,8 +52,7 @@ impl Disk {
             reads: 0,
             writes: 0,
             controls: 0,
-            dma_end: None,
-            control_active: false,
+            completion: DiskCompletion::Idle,
         }
     }
     pub(crate) fn attach_overlay(
@@ -52,18 +71,19 @@ impl Disk {
         self.c = None;
         self.busy = false;
         self.done = false;
-        self.dma_end = None;
-        self.control_active = false;
+        self.completion = DiskCompletion::Idle;
     }
     fn transfer(&mut self, memory: &mut Memory, extended: bool) -> Result<IoResult, Fault> {
         if extended && self.a == Some(0x2000) && self.c == Some(0x2000) {
             self.controls += 1;
-            self.control_active = true;
+            self.completion = DiskCompletion::Control {
+                end: self.completion.end(),
+            };
             self.busy = false;
             self.done = true;
             return Ok(IoResult::default());
         }
-        self.control_active = false;
+        self.completion = self.completion.without_control();
         if extended
             && memory.global_only()
             && self
@@ -134,7 +154,9 @@ impl Disk {
         self.busy = false;
         self.done = true;
         if extended {
-            self.dma_end = Some((b + 128) as u16);
+            self.completion = DiskCompletion::Transfer {
+                end: (b + 128) as u16,
+            };
         }
         Ok(IoResult::default())
     }
@@ -146,14 +168,21 @@ impl Disk {
         p: u8,
         v: u16,
     ) -> Result<IoResult, Fault> {
+        if op > 7 || p > 3 {
+            return Err(Fault::new(crate::FaultKind::UnsupportedIo));
+        }
         let mut r = IoResult::default();
-        if extended && (op, p) == (0, 3) && self.control_active {
-            self.control_active = false;
+        if extended
+            && (op, p) == (0, 3)
+            && matches!(self.completion, DiskCompletion::Control { .. })
+        {
+            self.completion = self.completion.without_control();
             return Ok(r);
         }
         if extended && (op, p) == (3, 0) {
             r.value = Some(
-                self.dma_end
+                self.completion
+                    .end()
                     .ok_or_else(|| Fault::new(crate::FaultKind::DiskDmaResultUninitialized))?,
             );
             return Ok(r);
@@ -249,6 +278,9 @@ impl Bus {
         p: u8,
         v: u16,
     ) -> Result<IoResult, Fault> {
+        if op > 7 || p > 3 {
+            return Err(Fault::new(crate::FaultKind::UnsupportedIo));
+        }
         let mut r = IoResult::default();
         match num {
             0o33 => return self.disk.io(memory, self.extended, op, p, v),

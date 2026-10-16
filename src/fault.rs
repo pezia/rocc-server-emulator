@@ -81,7 +81,7 @@ impl FaultKind {
 #[derive(Debug, Clone)]
 pub struct Fault {
     pub kind: FaultKind,
-    context: FaultContext,
+    context: Box<FaultContext>,
 }
 impl Fault {
     pub fn new(kind: FaultKind) -> Self {
@@ -90,7 +90,7 @@ impl Fault {
     pub fn with(kind: FaultKind, details: Value) -> Self {
         Self {
             kind,
-            context: serde_json::from_value(details).expect("typed fault context"),
+            context: Box::new(serde_json::from_value(details).expect("typed fault context")),
         }
     }
     pub fn details(&self) -> Value {
