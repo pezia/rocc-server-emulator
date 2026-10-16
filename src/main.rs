@@ -44,6 +44,7 @@ Usage: rocc-emulator boot IMAGE [OPTIONS]\n\
   compact-overlay IMAGE --overlay SOURCE --output NEWPATH\n\
   --keymap PATH             JSON host-key to raw ROCC-byte bindings (interactive)\n\
   --interactive             Live terminal (Ctrl-] or Ctrl-C exits)\n\
+  --cold-boot               Operate the WMS loader cold-start panel sequence\n\
   --steps N                 Instructions: default 1000000, unlimited live\n\
   --profile loader|extended Default loader, extended for live\n\
   --terminal none|experimental\n\
@@ -110,6 +111,7 @@ fn run() -> Result<i32, String> {
     let mut profile = None;
     let mut terminal = None;
     let mut interactive = false;
+    let mut cold_boot = false;
     let mut keymap = None;
     let mut steps = None;
     let mut connect = None;
@@ -120,6 +122,10 @@ fn run() -> Result<i32, String> {
     while let Some(arg) = args.next() {
         if arg == "--interactive" {
             interactive = true;
+            continue;
+        }
+        if arg == "--cold-boot" {
+            cold_boot = true;
             continue;
         }
         if arg == "--help" || arg == "-h" {
@@ -250,7 +256,8 @@ fn run() -> Result<i32, String> {
         } else {
             CaptureMode::Stop
         },
-    )?;
+    )?
+    .with_cold_boot(cold_boot)?;
     let image = image.ok_or("image path is required")?;
     let overlay = overlay.unwrap_or_else(|| {
         let mut name = image.as_os_str().to_os_string();

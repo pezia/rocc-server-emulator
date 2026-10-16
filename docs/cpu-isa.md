@@ -275,6 +275,7 @@ Canonical AC0 encodings (other AC fields select the transferred accumulator):
   0x603F NIO  0,0o77  no transfer; no pulse change
   0x607F NIOS 0,0o77  ION: enable, recognize IRQ after one following instruction
   0x60BF NIOC 0,0o77  IOF: disable, cancel deferred enable
+  0x613F DIA  0,0o77  read modeled front-panel switch register
   0x633F DIB  0,0o77  read highest-priority modeled pending device number, or 0
   0x643F DOB  0,0o77  write interrupt-disable mask (MSKO-style)
   0x653F DIC  0,0o77  modeled reset: disk reset, disable IRQs, clear mask;
@@ -283,10 +284,18 @@ Canonical AC0 encodings (other AC fields select the transferred accumulator):
   0x663F DOC  0,0o77  HALT
 ```
 
-Supported CPU transfers: NIO/DIB/DOB/DIC, pulses 0/1/2. Pulse 1 enables with delay 1;
+Supported CPU transfers: NIO/DIA/DIB/DOB/DIC, pulses 0/1/2. Pulse 1 enables with delay 1;
 pulse 2 disables with delay 0. DIC's reset is modeled only for disk; reset effects
-on other devices are OPEN. CPU DIA/front-panel switch reading, DOA and pulse 3
-controls are unsupported. In particular, no 15/16-bit mode-switch opcode is known.
+on other devices are OPEN. DIA reads a 16-bit panel register (default zero),
+preserving carry and the other accumulators. The classic Nova interpretation is
+corroborated by [SIMH's CPU implementation](https://github.com/simh/simh/blob/master/NOVA/nova_cpu.c).
+DOA and pulse 3 controls remain unsupported. No 15/16-bit mode-switch opcode is known.
+
+`--cold-boot` models the recovered WMS loader's operator sequence: set switches to
+`F0F0`, execute its recovery HALT, set switches to `FFFF`, then Continue. Only the
+exact eight-instruction handshake around that HALT is recognized, with matching
+comparison operands, and continuation is allowed once per run. RAM and guest
+instructions are not patched. See [rebooting an existing WMS overlay](../README.md#rebooting-an-existing-wms-overlay).
 
 HALT matches (word&0xE7FF)==0x663F:0x663F,0x6E3F,0x763F,0x7E3F all halt; the
 AC field is ignored. Pulse variants are not matched. The emulator records PC+1

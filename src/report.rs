@@ -62,6 +62,8 @@ impl Serialize for Report<'_> {
         field!("emulator_version", env!("CARGO_PKG_VERSION"));
         field!("build_revision", env!("ROCC_BUILD_REVISION"));
         field!("configuration", m.config());
+        field!("cold_boot_completed", m.cold_boot_completed());
+        field!("front_panel_switches", m.bus.switches);
         field!("image_sha256", m.image_sha256);
         field!("initial_overlay_sha256", m.initial_overlay_sha256());
         field!("final_overlay_sha256", overlay_digest(&m.bus.disk.overlay));

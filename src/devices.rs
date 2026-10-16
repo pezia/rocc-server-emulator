@@ -235,6 +235,8 @@ pub struct Bus {
     pub delay: u8,
     pub mask: u16,
     pub interrupts: u64,
+    /// Front-panel switch register, read by DIA to CPU device 0o77.
+    pub switches: u16,
     pub disk: Disk,
     pub terminal: Terminal,
     pub bank_selectors: BTreeSet<u16>,
@@ -257,6 +259,7 @@ impl Bus {
             delay: 0,
             mask: 0,
             interrupts: 0,
+            switches: 0,
             disk: Disk::new(raw),
             terminal: Terminal::new(experimental, connect_after),
             bank_selectors: BTreeSet::new(),
@@ -356,13 +359,15 @@ impl Bus {
                         r.skip = [self.enabled, !self.enabled, false, true][p as usize];
                         return Ok(r);
                     }
-                    if ![0, 3, 4, 5].contains(&op) {
+                    if ![0, 1, 3, 4, 5].contains(&op) {
                         return Err(Fault::new(crate::FaultKind::UnsupportedCpuControl));
                     }
                     if p > 2 {
                         return Err(Fault::new(crate::FaultKind::UnsupportedCpuPulse));
                     }
-                    if op == 3 {
+                    if op == 1 {
+                        r.value = Some(self.switches);
+                    } else if op == 3 {
                         r.value = Some(self.pending().unwrap_or(0) as u16);
                     } else if op == 4 {
                         self.mask = v;

@@ -76,6 +76,28 @@ incomplete trailing record), and writes only the latest version of each block.
 Select the new file with `--overlay` on the next boot. Existing destinations are
 never overwritten.
 
+### Rebooting an existing WMS overlay
+
+The overlay saves disk writes, not RAM. After WMS has run, its saved system block
+can select a restart path that expects RAM from the previous session. Boot that
+overlay with the loader's operator cold-start sequence:
+
+```sh
+./target/release/rocc-emulator boot /path/to/disk.img --interactive --cold-boot
+```
+
+`--cold-boot` requires the extended profile (selected by `--interactive`). It sets
+the modeled front-panel switches to `F0F0`. At the recognized WMS loader recovery
+HALT, it changes them to `FFFF` and continues once. The guest then initializes RAM
+and updates the existing overlay through normal disk writes. It does not erase
+the overlay or patch guest memory. Other HALTs still stop execution. The sequence
+is specific to the recovered WMS loader; other guest loaders are not covered.
+Batch runs must also select `--profile extended` explicitly.
+
+Reports record `configuration.cold_boot`, `cold_boot_completed`, and the final
+`front_panel_switches` value. A fresh overlay may boot without entering recovery,
+in which case `cold_boot_completed` remains false.
+
 Reports are created privately (`0600`, restricted further by the umask), streamed
 to a temporary file, synced, and published without overwriting another file.
 Report schema 2 records effective configuration, build revision, scheduled input,

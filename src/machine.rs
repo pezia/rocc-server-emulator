@@ -27,6 +27,7 @@ pub struct Machine {
     pub fault: Option<Fault>,
     pub image_sha256: String,
     pub(crate) recent: VecDeque<(u16, u16, u16)>,
+    cold_boot_completed: bool,
 }
 impl Machine {
     pub fn new(
@@ -83,6 +84,9 @@ impl Machine {
         cpu.memory.set(10941, 0);
         cpu.pc = 127;
         let mut bus = Bus::new(raw, extended, terminal, connect);
+        if config.cold_boot() {
+            bus.switches = 0xf0f0;
+        }
         bus.terminal = crate::terminal::Terminal::with_config(&config);
         Ok(Self {
             initial_overlay_sha256: crate::report::overlay_digest(&bus.disk.overlay),
@@ -95,6 +99,7 @@ impl Machine {
             fault: None,
             image_sha256,
             recent: VecDeque::with_capacity(32),
+            cold_boot_completed: false,
         })
     }
     pub fn attach_overlay(
@@ -156,7 +161,7 @@ impl Machine {
                     self.recent.pop_front();
                 }
                 self.recent.push_back((info.pc, info.word, self.cpu.pc));
-                if info.halt {
+                if info.halt && !self.complete_cold_boot(info.pc) {
                     self.reason = Some("halt".into());
                 }
             }
@@ -173,6 +178,37 @@ impl Machine {
             }
         }
         self.steps += 1;
+    }
+    fn complete_cold_boot(&mut self, halt_pc: u16) -> bool {
+        if !self.config.cold_boot()
+            || self.cold_boot_completed
+            || self.bus.switches != 0xf0f0
+            || self.cpu.ac[..2] != [0xf0f0, 0xf0f0]
+        {
+            return false;
+        }
+        // WMS loader's operator cold-start handshake: read F0F0, compare,
+        // HALT, then wait for FFFF. Recognize the whole instruction sequence,
+        // independent of its load address; never continue an arbitrary HALT.
+        const HANDSHAKE: [u16; 8] = [
+            0x613f, 0x29e1, 0x8d0c, 0x010d, 0x663f, 0x613f, 0x8004, 0x01fd,
+        ];
+        if !HANDSHAKE.iter().enumerate().all(|(n, word)| {
+            self.cpu
+                .read(halt_pc.wrapping_sub(4).wrapping_add(n as u16) as usize)
+                .ok()
+                == Some(*word)
+        }) {
+            return false;
+        }
+        // HALT already advanced PC. Operate only the panel and Continue switch;
+        // the guest performs all initialization and persistent disk writes.
+        self.bus.switches = 0xffff;
+        self.cold_boot_completed = true;
+        true
+    }
+    pub fn cold_boot_completed(&self) -> bool {
+        self.cold_boot_completed
     }
     pub fn state(&self) -> Value {
         cpu_state(&self.cpu, self.bus.extended())

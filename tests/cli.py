@@ -21,6 +21,49 @@ class CliTests(unittest.TestCase):
     def boot(self,image,*args):
         return run([BINARY,'boot',image,'--steps','20',*args],capture_output=True,text=True)
 
+    def test_cold_boot_runs_guest_panel_handshake_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            raw=bytearray(6144)
+            # Relocated WMS panel sequence: F0F0, HALT, FFFF, continue.
+            words={127:40,10:0xf0f0,56:0x663f}
+            words.update(enumerate([
+                0x613f,0x29e1,0x8d0c,0x010d,0x663f,
+                0x613f,0x8004,0x01fd,0x663f,
+            ],40))
+            for address,word in words.items():raw[address*2:address*2+2]=word.to_bytes(2,'big')
+            image=Path(tmp)/'disk';image.write_bytes(raw)
+            for cold in [False,True]:
+                report=Path(tmp)/f'{cold}.json'
+                args=['--cold-boot'] if cold else []
+                p=self.boot(image,'--profile','extended','--report',report,*args)
+                self.assertEqual(p.returncode,0,p.stderr)
+                r=json.loads(report.read_text())
+                self.assertEqual(r['configuration']['cold_boot'],cold)
+                self.assertEqual(r['cold_boot_completed'],cold)
+                self.assertEqual(r['reason'],'halt')
+                self.assertEqual(r['state']['pc'],49 if cold else 57)
+                self.assertEqual(r['steps'],8 if cold else 6)
+                self.assertEqual(r['disk_writes'],0)
+            self.assertEqual(image.read_bytes(),raw)
+
+    def test_cold_boot_preserves_unrelated_halt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            raw=bytearray(6144);raw[254:256]=(0x663f).to_bytes(2,'big')
+            image=Path(tmp)/'disk';image.write_bytes(raw);report=Path(tmp)/'halt.json'
+            p=self.boot(image,'--profile','extended','--cold-boot','--report',report)
+            self.assertEqual(p.returncode,0,p.stderr)
+            r=json.loads(report.read_text())
+            self.assertEqual((r['reason'],r['steps'],r['state']['pc']),('halt',1,128))
+            self.assertFalse(r['cold_boot_completed'])
+
+    def test_cold_boot_requires_extended_profile_before_opening_overlay(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            image=Path(tmp)/'disk';image.write_bytes(bytes(6144))
+            p=self.boot(image,'--cold-boot')
+            self.assertNotEqual(p.returncode,0)
+            self.assertIn('cold boot requires extended profile',p.stderr)
+            self.assertFalse(Path(str(image)+'.overlay').exists())
+
     def test_default_overlay_persists_and_boots_saved_sector(self):
         with tempfile.TemporaryDirectory() as tmp:
             image=Path(tmp)/'disk.img';original=writing_image();image.write_bytes(original)

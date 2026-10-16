@@ -70,6 +70,7 @@ pub struct MachineConfig {
     connect_after: Option<u64>,
     limits: ResourceLimits,
     capture: CaptureMode,
+    cold_boot: bool,
 }
 impl MachineConfig {
     pub fn new(
@@ -98,7 +99,18 @@ impl MachineConfig {
             connect_after,
             limits,
             capture,
+            cold_boot: false,
         })
+    }
+    pub fn with_cold_boot(mut self, enabled: bool) -> Result<Self, ConfigError> {
+        if enabled && !self.extended() {
+            return Err("cold boot requires extended profile".into());
+        }
+        self.cold_boot = enabled;
+        Ok(self)
+    }
+    pub fn cold_boot(&self) -> bool {
+        self.cold_boot
     }
     pub fn profile(&self) -> CpuProfile {
         self.profile
