@@ -107,3 +107,18 @@ fn program_combines_irq_delay_masking_banks_dma_and_terminal_ack() {
     m.step();
     assert_eq!(m.reason.as_deref(), Some("halt"));
 }
+#[test]
+fn dma_respects_checked_memory_mapping_even_with_mismatched_legacy_profile() {
+    let mut cpu = rocc_emulator::cpu::Cpu::new(16, true).unwrap();
+    cpu.memory.set_mapping(Mapping::GlobalOnly).unwrap();
+    let mut disk = rocc_emulator::devices::Disk::new(vec![0; 6144]);
+    disk.io(&mut cpu.memory, false, 2, 0, 0).unwrap();
+    disk.io(&mut cpu.memory, false, 4, 0, 0xf000).unwrap();
+    assert_eq!(
+        disk.io(&mut cpu.memory, false, 6, 1, 0)
+            .unwrap_err()
+            .reason(),
+        "unmapped_memory_bank"
+    );
+    assert_eq!(disk.reads, 0);
+}

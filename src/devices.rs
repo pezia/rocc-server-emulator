@@ -128,6 +128,7 @@ impl Disk {
                 crate::FaultContext::Dma { address: b },
             ));
         }
+        memory.validate_range(b, 128, memory.mapping())?;
         if a & 0x1000 != 0 {
             let mut raw = Vec::with_capacity(256);
             for n in 0..128 {
@@ -150,7 +151,7 @@ impl Disk {
                 .map(Vec::as_slice)
                 .unwrap_or(&self.base[offset..offset + 256]);
             for n in 0..128 {
-                memory.set(b + n, u16::from_be_bytes([raw[n * 2], raw[n * 2 + 1]]));
+                memory.write(b + n, u16::from_be_bytes([raw[n * 2], raw[n * 2 + 1]]))?;
             }
             self.reads += 1;
         }

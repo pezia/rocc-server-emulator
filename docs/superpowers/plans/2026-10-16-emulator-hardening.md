@@ -232,7 +232,7 @@ JSON fault construction/null diagnostics, missing total packet counts, and an
 interactive capture-policy mismatch. Reproductions were observed failing before
 fixes; the complete suites were then rerun. Final evidence is recorded below.
 
-- 69 Rust tests pass on stable and Rust 1.87.
+- 70 Rust tests pass on stable and Rust 1.87.
 - 28 CLI/PTY/persistence tests pass; 8262 frozen and 610 independent CPU cases pass.
 - Five independent-model hand checks and generator reproducibility pass.
 - Formatting and Clippy with warnings denied pass; performance probes run.
