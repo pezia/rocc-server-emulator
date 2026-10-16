@@ -278,6 +278,7 @@ impl Terminal {
         crate::machine::hex(&d.finalize())
     }
     fn transfer(&mut self, memory: &Memory, value: u16) -> Result<IoResult, Fault> {
+        self.reserve_events(1)?;
         // The original echo routine leaves a stale B; mode zero is immediate.
         if value < 256 {
             let raw = [value as u8];

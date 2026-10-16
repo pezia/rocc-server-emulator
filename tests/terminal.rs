@@ -84,3 +84,37 @@ fn live_history_evicts_and_keeps_full_screen() {
     assert_eq!(d["packet_history_truncated"], true);
     assert_eq!(t.snapshot()["display_byte_count"], 4);
 }
+#[test]
+fn event_capacity_precedes_dma_reads() {
+    let (mut t, mut m) = setup(1, 4, 2, CaptureMode::Stop, None);
+    t.io(&m, 2, 0, 0xe000).unwrap();
+    t.io(&m, 2, 0, 0).unwrap();
+    t.io(&m, 4, 0, 200).unwrap();
+    assert_eq!(
+        t.io(&m, 6, 0, 0xe002).unwrap_err().reason(),
+        "terminal_event_limit"
+    );
+    t.io(&m, 0, 2, 0).unwrap();
+    m.write(200, 0x4142).unwrap();
+    t.io(&m, 6, 0, 0xe002).unwrap();
+    assert_eq!(t.display_report()["screen"]["lines"][0], "AB");
+}
+#[test]
+fn timer_pending_flag_tracks_every_clear_operation() {
+    for operation in [0, 1, 3, 5] {
+        let (mut t, m) = setup(4, 4, 2, CaptureMode::Stop, None);
+        t.io(&m, 2, 0, 0xe001).unwrap();
+        t.io(&m, 6, 0, 1).unwrap();
+        t.io(&m, 0, 2, 0).unwrap();
+        for _ in 0..1000 {
+            t.tick().unwrap();
+        }
+        assert_eq!(t.next_event(), Some([0x6000, 0, 0]));
+        t.io(&m, operation, 2, 0).unwrap();
+        for _ in 0..1000 {
+            t.tick().unwrap();
+        }
+        assert_eq!(t.pending_events(), 1);
+        assert_eq!(t.next_event(), Some([0x6000, 0, 0]));
+    }
+}
