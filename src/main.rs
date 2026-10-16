@@ -53,6 +53,8 @@ Usage: rocc-emulator boot IMAGE [OPTIONS]\n\
   --address-bits 15|16      Extended requires16\n\
   --expected-sha256 HASH    Reject a different image\n\
   --overlay PATH            Persistent disk writes (default: IMAGE.overlay)\n\
+  --tape PATH               Mount an existing SIMH tape read-only (extended)\n\
+  --tape-create NEWPATH     Create a new writable SIMH tape (extended)\n\
   --report NEWPATH          Create JSON report including changed disk blocks\n\
   --key-at STEP:HEX         Inject byte before zero-based STEP (repeatable)\n\
   cpu-cases                JSON instruction fixtures on stdin for differential tests"
@@ -114,6 +116,7 @@ fn run() -> Result<i32, String> {
     let mut interactive = false;
     let mut cold_boot = false;
     let mut memory = true;
+    let mut tape = None;
     let mut keymap = None;
     let mut steps = None;
     let mut connect = None;
@@ -160,6 +163,19 @@ fn run() -> Result<i32, String> {
             "--expected-sha256" => expected = Some(value),
             "--report" => report = Some(PathBuf::from(value)),
             "--overlay" => overlay = Some(PathBuf::from(value)),
+            "--tape" | "--tape-create" => {
+                if tape.is_some() {
+                    return Err(
+                        "--tape and --tape-create are mutually exclusive and cannot be repeated"
+                            .into(),
+                    );
+                }
+                tape = Some(if arg == "--tape" {
+                    rocc_emulator::tape::TapeMount::ReadOnly(value.into())
+                } else {
+                    rocc_emulator::tape::TapeMount::CreateNew(value.into())
+                });
+            }
             "--key-at" => {
                 let (step, byte) = value
                     .split_once(':')
@@ -208,6 +224,9 @@ fn run() -> Result<i32, String> {
     }
     if experimental && !extended {
         return Err("terminal requires extended profile".into());
+    }
+    if tape.is_some() && !extended {
+        return Err("tape mounting requires extended profile".into());
     }
     let bits = bits.unwrap_or(if extended { 16 } else { 15 });
     if ![15, 16].contains(&bits) || (extended && bits != 16) {
@@ -287,6 +306,9 @@ fn run() -> Result<i32, String> {
     if destination.as_ref() == Some(&overlay_path) {
         return Err("report and overlay must use separate paths".into());
     }
+    if let Some(tape) = tape {
+        m.attach_tape(tape, &image, &overlay_path, destination.as_deref())?;
+    }
     if memory {
         m.attach_memory(&overlay_path, &image_file, destination.as_deref())?;
     }
@@ -305,7 +327,10 @@ fn run() -> Result<i32, String> {
         }
         None
     };
-    m.finish_memory()?;
+    let tape_result = m.finish_tape();
+    let memory_result = m.finish_memory();
+    memory_result?;
+    tape_result?;
     let elapsed = started.elapsed().as_secs_f64();
     let signal = interactive_report.as_ref().and_then(|r| r.signal);
     let mut final_output = String::new();
@@ -353,6 +378,9 @@ fn run() -> Result<i32, String> {
         ));
     } else {
         final_output.push_str("RAM: persistence disabled.\n");
+    }
+    if let Some(tape) = m.tape_status() {
+        final_output.push_str(&format!("Tape: {}, {} records, {} marks, {} reads, {} writes; position {}. Guest backup completion requires verification.\n",tape.mode,tape.records,tape.marks,tape.reads,tape.writes,tape.position));
     }
     if m.bus.terminal.total_display_bytes > 0 {
         for row in &summary.screen.cells {

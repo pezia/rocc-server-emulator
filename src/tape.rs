@@ -37,3 +37,10 @@ pub enum TapeMount {
     ReadOnly(PathBuf),
     CreateNew(PathBuf),
 }
+
+pub(crate) fn open_controller(
+    mount: &TapeMount,
+    protected: &TapeProtectedPaths,
+) -> Result<TapeController, String> {
+    Ok(TapeController::new(TapeSession::open(mount, protected)?))
+}
