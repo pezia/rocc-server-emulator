@@ -101,6 +101,7 @@ reel. Original disk, overlay and retained-RAM SHA-256 values remained unchanged.
 
 The native system loader read every tape object and restored a blank disk through
 a separate overlay. The restored disk cold-booted to WMS4 Main Menu. Logical
-payload/source comparison covers all 1,420 catalogue objects; point-in-time
-journal comparison is distinguished from post-restart journal activity.
+payload/source and catalogue metadata comparison matched all 1,420 objects
+exactly, with no exclusions. The comparison used snapshots taken before
+post-restart journal activity.
 Acceptance artifacts, detailed inventories and credentials remain outside Git.

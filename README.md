@@ -156,7 +156,8 @@ Use a **blank destination base image of the original disk's size** and a new
 overlay, keeping the original disk session separate:
 
 ```sh
-truncate -s "$(stat -c %s original.img)" restored.img
+(set -C; : > restored.img) &&
+  truncate -s "$(stat -c %s original.img)" restored.img
 cargo run --release --locked --example wms_tape_restore -- \
   restored.img backup.tap restored.overlay restore-report.json
 ./target/release/rocc-emulator boot restored.img --overlay restored.overlay \

@@ -165,7 +165,20 @@ impl TapeController {
             .count
             .ok_or_else(|| Fault::new(FaultKind::TapeRegisterUninitialized))?;
         if count & 0x7fff == 0 && self.command & 0x38 == 0 {
-            return Ok(4096);
+            // Whole-record mode validates the indexed record before consuming it.
+            let n = match self
+                .session
+                .medium
+                .objects
+                .get(self.session.medium.position())
+            {
+                Some(TapeObject::Data { length, .. }) => (*length as usize).div_ceil(2),
+                Some(TapeObject::Mark) | None => 0,
+            };
+            if n > 4096 {
+                return Err(Self::protocol(6, 1, count));
+            }
+            return Ok(n);
         }
         let n = (0x8000u32 - u32::from(count & 0x7fff)) as usize;
         if !(1..=4096).contains(&n) {
@@ -211,7 +224,9 @@ impl TapeController {
                     .address
                     .ok_or_else(|| Fault::new(FaultKind::TapeRegisterUninitialized))?
                     as usize;
-                memory.validate_range(start, n, memory.mapping())?;
+                if n > 0 {
+                    memory.validate_range(start, n, memory.mapping())?;
+                }
                 if self.command & 0x38 == 0x28 {
                     if !self.session.writable {
                         self.flags = 0x9000;
@@ -526,6 +541,56 @@ mod tests {
         assert_eq!(t.memory.read(300).unwrap(), 0x1234);
         assert_eq!(t.memory.peek(301).unwrap(), None);
         assert_eq!(t.io(3, 0, 0).value, Some(301));
+    }
+    #[test]
+    fn zero_count_read_validates_actual_record_at_memory_boundaries() {
+        for (address, mapping) in [
+            (0xffff, crate::memory::Mapping::SelectedBank(0)),
+            (0xefff, crate::memory::Mapping::GlobalOnly),
+        ] {
+            let mut t = TestTape::make(Some(&[2, 0, 0, 0, 0x12, 0x34, 2, 0, 0, 0]));
+            t.memory.set_mapping(mapping).unwrap();
+            t.io(2, 0, 0);
+            t.io(4, 0, address);
+            t.io(6, 1, 0);
+            t.tick();
+            assert_eq!(t.memory.read(address as usize).unwrap(), 0x1234);
+            assert_eq!(t.controller.status().position, 1);
+            assert_eq!(t.io(3, 0, 0).value, Some(address.wrapping_add(1)));
+        }
+    }
+    #[test]
+    fn zero_count_read_rejects_oversized_record_without_consuming_it() {
+        let length = 8194u32;
+        let mut raw = length.to_le_bytes().to_vec();
+        raw.resize(4 + length as usize, 0x12);
+        raw.extend_from_slice(&length.to_le_bytes());
+        let mut t = TestTape::make(Some(&raw));
+        t.memory.write(300, 0xabcd).unwrap();
+        t.io(2, 0, 0);
+        t.io(4, 0, 300);
+        t.io(6, 1, 0);
+        assert!(t.controller.tick(&mut t.memory).is_err());
+        assert_eq!(t.controller.status().position, 0);
+        assert_eq!(t.controller.status().reads, 0);
+        assert!(!t.controller.done);
+        assert_eq!(t.memory.read(300).unwrap(), 0xabcd);
+    }
+    #[test]
+    fn zero_count_mark_and_end_do_not_require_dma_memory() {
+        let mut t = TestTape::make(Some(&[0; 4]));
+        t.memory
+            .set_mapping(crate::memory::Mapping::GlobalOnly)
+            .unwrap();
+        for position in [1, 1] {
+            t.io(2, 0, 0);
+            t.io(4, 0, 0xffff);
+            t.io(6, 1, 0);
+            t.tick();
+            assert_eq!(t.controller.status().position, position);
+            assert_ne!(t.io(1, 0, 0).value.unwrap() & 0x200, 0);
+            assert_eq!(t.io(3, 0, 0).value, Some(0xffff));
+        }
     }
     #[test]
     fn rocc_file_mark_is_eof_not_the_hard_error_status() {
