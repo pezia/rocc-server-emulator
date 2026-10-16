@@ -20,13 +20,19 @@ machine:
     alt: Open ROCC cabinet showing circuit boards, ribbon cables, and rows of external connectors.
     caption: Owner-supplied photograph of the internal boards, ribbon cabling, and connector panel.
 screenshots:
-  - path: /media/system-startup.png
-    title: System startup
-    alt: Emulator terminal displaying startup output from original guest software.
-    caption: Add the guest system name, release, capture date, and explanation of the visible startup stage with this screenshot.
-    pending: A screenshot of real guest software starting in the emulator will be added here.
-  - path: /media/system-session.png
-    title: An interactive session
-    alt: Emulator terminal displaying an interactive session with original guest software.
-    caption: Add the guest system name, release, capture date, and explanation of the visible operation with this screenshot.
-    pending: A screenshot of an interactive session with real guest software will be added here.
+  - path: /media/screenshot_after_boot.png
+    title: WMS4 main menu
+    alt: WMS4 main menu listing data entry, database access, advanced processing, diagnostics, and other options at a selection prompt.
+    caption: The WMS4 main menu after boot, ready for an operator to select a function.
+  - path: /media/screenshot_system_customization.png
+    title: System customization
+    alt: WMS system customization screen showing memory and disk settings and software base level 4.1B/050, with customer details obscured.
+    caption: System configuration showing memory, disk, and WMS settings, including software base level 4.1B/050. Customer details are obscured.
+  - path: /media/screenshot_dynamic_memory_evaluator.png
+    title: Dynamic Core Evaluator
+    alt: Dynamic Core Evaluator displaying memory request counters, page counts, free pages, and global read statistics.
+    caption: The guest memory diagnostic reports page usage, free pages, and global memory and read request counters.
+  - path: /media/screenshot_customer_program.png
+    title: Customer application
+    alt: Hungarian-language application menu offering display, data entry, and exit options, with identifying text obscured.
+    caption: A customer application running in the emulator, with Hungarian menu options for display, data entry, and exit. Identifying text is obscured.

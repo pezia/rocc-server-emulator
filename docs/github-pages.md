@@ -28,13 +28,15 @@ paths in `_data/gallery.yml` to match your filenames:
 | `DSCF3219.JPG` | Keyboard. |
 | `DSCF3244.JPG` | Cabinet identification plate. |
 | `DSCF3249.JPG` | Internal boards, ribbon cables, and connector panel. |
-| `system-startup.png` | Actual startup output from a real guest system in the emulator. |
-| `system-session.png` | Actual interactive operation of that guest system. |
+| `screenshot_after_boot.png` | WMS4 main menu after boot. |
+| `screenshot_system_customization.png` | System configuration and software base level. |
+| `screenshot_dynamic_memory_evaluator.png` | Dynamic Core Evaluator memory diagnostics. |
+| `screenshot_customer_program.png` | Hungarian-language customer application menu. |
 
 For each image, edit its title, descriptive alt text, and caption in
 `_data/gallery.yml`. Give photographs a credit and identify the model only when
-confirmed. For screenshots, include the system name and release, capture date,
-and what operation the screen demonstrates. Remove private information before
+confirmed. For screenshots, describe what operation the screen demonstrates;
+include the system name, release, and capture date when known. Remove private information before
 adding captures to the public repository.
 
 Missing files render as designed, labeled placeholders rather than broken images.
