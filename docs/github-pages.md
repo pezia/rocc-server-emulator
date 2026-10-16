@@ -23,8 +23,11 @@ paths in `_data/gallery.yml` to match your filenames:
 
 | File | Content |
 | --- | --- |
-| `machine-front.jpg` | Photograph of the physical machine. |
-| `machine-terminal.jpg` | Photograph of its terminal and keyboard. |
+| `DSCF3240.JPG` | Cabinet front; also used in the homepage hero. |
+| `DSCF3229.JPG` | CRT terminal. |
+| `DSCF3219.JPG` | Keyboard. |
+| `DSCF3244.JPG` | Cabinet identification plate. |
+| `DSCF3249.JPG` | Internal boards, ribbon cables, and connector panel. |
 | `system-startup.png` | Actual startup output from a real guest system in the emulator. |
 | `system-session.png` | Actual interactive operation of that guest system. |
 
@@ -35,12 +38,12 @@ and what operation the screen demonstrates. Remove private information before
 adding captures to the public repository.
 
 Missing files render as designed, labeled placeholders rather than broken images.
-The homepage illustration is decorative, not a representation of a confirmed
-ROCC model. Adding `machine-front.jpg` automatically replaces it with the real
-photograph as well as populating the machine gallery. When a
-file is added, Jekyll automatically displays it with its caption on the next
-build. Review and replace the provisional caption at the same time. Add more
-entries to the appropriate gallery list for additional images.
+The homepage hero uses `DSCF3240.JPG`, with a decorative terminal illustration
+as a fallback if that photograph is absent. The five supplied photographs are
+listed in the machine gallery with descriptive captions. When a file is added,
+Jekyll automatically displays it with its caption on the next build. Review and
+replace any provisional caption at the same time. Add more entries to the
+appropriate gallery list for additional images.
 
 Once the galleries are populated, update the introductory text above them in
 `index.html` to describe the supplied material rather than future additions.

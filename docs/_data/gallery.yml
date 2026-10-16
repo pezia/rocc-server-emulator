@@ -1,14 +1,24 @@
 machine:
-  - path: /media/machine-front.jpg
-    title: The machine
-    alt: Front view of the owner's ROCC computer.
-    caption: Owner-supplied photograph. Model identification and photo credit to be added with the image.
-    pending: A photograph of the machine will be added here.
-  - path: /media/machine-terminal.jpg
-    title: Terminal and keyboard
-    alt: The terminal and keyboard belonging to the owner's ROCC system.
-    caption: Owner-supplied photograph. Terminal identification and photo credit to be added with the image.
-    pending: A photograph of the terminal and keyboard will be added here.
+  - path: /media/DSCF3240.JPG
+    title: The ROCC cabinet
+    alt: Front view of the ROCC cabinet with its control panel and dark drive window.
+    caption: Owner-supplied photograph of the cabinet, showing the front-panel controls and ROCC branding.
+  - path: /media/DSCF3229.JPG
+    title: The terminal
+    alt: ROCC CRT terminal with a blank screen, with part of its keyboard visible beside it.
+    caption: Owner-supplied photograph of the ROCC terminal and its CRT display.
+  - path: /media/DSCF3219.JPG
+    title: The keyboard
+    alt: ROCC keyboard with dedicated field and document keys and a separate numeric keypad.
+    caption: Owner-supplied photograph of the keyboard, including its field, document, and numeric entry keys.
+  - path: /media/DSCF3244.JPG
+    title: Identification plate
+    alt: ROCC identification plate marked unit R3545, serial 2934, and 240 volts, 5 amps, 50 hertz.
+    caption: Owner-supplied close-up of the cabinet identification plate and electrical ratings.
+  - path: /media/DSCF3249.JPG
+    title: Inside the cabinet
+    alt: Open ROCC cabinet showing circuit boards, ribbon cables, and rows of external connectors.
+    caption: Owner-supplied photograph of the internal boards, ribbon cabling, and connector panel.
 screenshots:
   - path: /media/system-startup.png
     title: System startup

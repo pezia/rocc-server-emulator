@@ -11,10 +11,10 @@ title: The ROCC computer and emulator
     <div class="actions"><a class="button" href="#the-machine">About the computer <span aria-hidden="true">↗︎</span></a><a class="text-link" href="#try-the-emulator">Build and run <span aria-hidden="true">→</span></a></div>
     <p class="hero-note">Experimental Rust emulator · Inferred hardware</p>
   </div>
-  {% assign machine_photo = site.static_files | where: "path", "/media/machine-front.jpg" | first %}
+  {% assign machine_photo = site.static_files | where: "path", "/media/DSCF3240.JPG" | first %}
   <figure class="hero-visual">
     {% if machine_photo %}
-    <img class="hero-photo" src="{{ '/media/machine-front.jpg' | relative_url }}" alt="Front view of the owner's ROCC computer.">
+    <img class="hero-photo" src="{{ '/media/DSCF3240.JPG' | relative_url }}" alt="Front view of the ROCC cabinet with its control panel and dark drive window.">
     {% else %}
     <div class="machine-drawing" role="img" aria-label="Stylized terminal illustration; a real machine photograph will be added later.">
       <span class="drawing-orbit" aria-hidden="true"></span>
@@ -31,7 +31,7 @@ title: The ROCC computer and emulator
   <div><p class="eyebrow">01 / The machine</p><h2>ROCC Classic systems</h2></div>
   <div class="prose"><p>ROCC's Classic systems were business minicomputers: one computer, multiple operators, a desk full of terminals. Descended from the 16-bit Data General Nova architecture, they handled data entry and business processing.</p><p>Their software evolved from releases known as “Loads” into the Workstation Management System (WMS). The 1986–87 Classic range included the 2825 and 2835 in the compact “Miniboy” cabinet.</p><p class="muted">This project provisionally identifies its target as the ROCC 2800 Classic family. The exact model and processor revision remain unresolved.</p></div>
 </section>
-<section class="gallery-section" aria-labelledby="archive-title"><div class="section-heading"><h2 id="archive-title">Machine photographs</h2><p>Photographs of the computer and terminal will be added here.</p></div>
+<section class="gallery-section" aria-labelledby="archive-title"><div class="section-heading"><h2 id="archive-title">Machine photographs</h2><p>Owner-supplied photographs of the cabinet, terminal, keyboard, identification plate, and internal cabling.</p></div>
 {% include gallery.html items=site.data.gallery.machine %}
 </section>
 
