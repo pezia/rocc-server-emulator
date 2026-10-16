@@ -178,7 +178,8 @@ impl MemorySession {
             }
             if self.file.is_some() {
                 self.verify_destination()?;
-                let file = self.file.as_mut().unwrap();
+            }
+            if let Some(file) = self.file.as_mut() {
                 file.seek(SeekFrom::Start(10)).map_err(|e| e.to_string())?;
                 file.write_all(&[1]).map_err(|e| e.to_string())?;
                 file.sync_all().map_err(|e| e.to_string())?;
