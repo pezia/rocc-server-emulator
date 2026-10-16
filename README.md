@@ -1,3 +1,5 @@
+> **Warning:** This project is fully vibe coded. **Do not trust it!**
+
 # ROCC emulator
 
 An experimental Rust emulator for inferred ROCC hardware: CPU, banked memory,
