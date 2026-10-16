@@ -81,10 +81,12 @@ impl Machine {
         }
         cpu.memory.set(10941, 0);
         cpu.pc = 127;
+        let mut bus = Bus::new(raw, extended, terminal, connect);
+        bus.terminal = crate::terminal::Terminal::with_config(&config);
         Ok(Self {
             config,
             cpu,
-            bus: Bus::new(raw, extended, terminal, connect),
+            bus,
             steps: 0,
             block_moves: 0,
             reason: None,
@@ -119,7 +121,7 @@ impl Machine {
     pub fn execute_step(cpu: &mut Cpu, bus: &mut Bus) -> Result<crate::cpu::StepInfo, Fault> {
         cpu.last_instruction = None;
         if bus.extended() {
-            bus.terminal.tick();
+            bus.terminal.tick()?;
             if bus.delay > 0 {
                 bus.delay -= 1;
             } else if bus.enabled && bus.pending().is_some() {

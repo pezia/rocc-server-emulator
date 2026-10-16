@@ -235,7 +235,7 @@ impl Bus {
     pub fn pending(&self) -> Option<u8> {
         if self.disk.done && self.mask & 0x2000 == 0 {
             Some(0o33)
-        } else if !self.terminal.events.is_empty() && self.mask & 0x8000 == 0 {
+        } else if self.terminal.pending_events() > 0 && self.mask & 0x8000 == 0 {
             Some(0o50)
         } else {
             None

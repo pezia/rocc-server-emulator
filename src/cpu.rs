@@ -402,7 +402,7 @@ mod tests {
         let (mut c, mut b) = setup(true, 0x8200);
         c.memory.set(1, 200);
         c.memory.set(200, 0x663f);
-        b.terminal.events.push_back([1, 2, 3]);
+        b.terminal.connect().unwrap();
         b.enabled = true;
         b.delay = 1;
         c.step(&mut b).unwrap();
