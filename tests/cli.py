@@ -274,4 +274,12 @@ class CliTests(unittest.TestCase):
                     if p is not None and p.poll() is None:p.kill();p.wait()
                     termios.tcsetattr(slave,termios.TCSANOW,original);os.close(master);os.close(slave)
 
+    def test_report_permissions_ignore_permissive_umask(self):
+        for mask in (0,0o022):
+            with self.subTest(umask=mask),tempfile.TemporaryDirectory() as tmp:
+                image=Path(tmp)/'disk';image.write_bytes(bytes(6144));report=Path(tmp)/'report'
+                p=subprocess.run([BINARY,image,'--steps','1','--report',report],capture_output=True,umask=mask,timeout=15)
+                self.assertEqual(p.returncode,0,p.stderr)
+                self.assertEqual(report.stat().st_mode&0o777,0o600)
+
 if __name__=='__main__':unittest.main()

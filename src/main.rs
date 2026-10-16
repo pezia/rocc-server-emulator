@@ -6,7 +6,7 @@ use rocc_emulator::{
 use serde_json::{json, Value};
 use std::{
     env,
-    fs::{self, File, OpenOptions},
+    fs::{self, File},
     io::{self, Read, Write},
     path::{Path, PathBuf},
     time::Instant,
@@ -289,36 +289,14 @@ fn run() -> Result<i32, String> {
 }
 
 fn check_destination(path: &Path) -> Result<PathBuf, String> {
-    if fs::symlink_metadata(path).is_ok() {
-        return Err("report already exists; choose a new path".into());
-    }
-    let parent = path
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
-    let parent = fs::canonicalize(parent).map_err(|e| format!("report parent: {e}"))?;
-    let dest = parent.join(path.file_name().ok_or("report needs a filename")?);
-    Ok(dest)
+    rocc_emulator::artifact::check_destination(path).map_err(|e| e.to_string())
 }
 fn publish(dest: &Path, data: &Value) -> Result<(), String> {
-    let temporary = dest
-        .parent()
-        .unwrap()
-        .join(format!(".rocc-rust-report-{}", std::process::id()));
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&temporary)
-        .map_err(|e| e.to_string())?;
-    let result = (|| -> Result<(), String> {
-        serde_json::to_writer_pretty(&mut file, data).map_err(|e| e.to_string())?;
-        file.write_all(b"\n").map_err(|e| e.to_string())?;
-        file.sync_all().map_err(|e| e.to_string())?;
-        fs::hard_link(&temporary, dest).map_err(|e| e.to_string())?;
-        Ok(())
-    })();
-    let cleanup = fs::remove_file(&temporary).map_err(|e| e.to_string());
-    result.and(cleanup)
+    rocc_emulator::artifact::publish_new(dest, |file| {
+        serde_json::to_writer_pretty(&mut *file, data).map_err(io::Error::other)?;
+        file.write_all(b"\n")
+    })
+    .map_err(|e| e.to_string())
 }
 
 fn uint(v: &Value, key: &str, max: u64) -> Result<u64, String> {

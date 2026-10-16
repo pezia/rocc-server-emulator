@@ -18,3 +18,5 @@ pub struct IoResult {
 }
 
 mod signals;
+
+pub mod artifact;
