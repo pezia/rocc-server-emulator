@@ -128,3 +128,33 @@ fn attachment_requires_matching_overlay_and_zero_steps() {
     m.step();
     assert!(m.attach_memory(&f.overlay, &file, None).is_err());
 }
+
+#[test]
+fn multiply_linked_disk_overlays_cannot_select_separate_ram() {
+    let f = Fixture::new();
+    let (mut m, image) = f.machine();
+    m.attach_memory(&f.overlay, &image, None).unwrap();
+    m.step();
+    m.finish_memory().unwrap();
+    drop(m);
+    let ram = f.dir.join("disk.overlay.ram");
+    let before = fs::read(&ram).unwrap();
+    let alias = f.dir.join("alias.overlay");
+    fs::hard_link(&f.overlay, &alias).unwrap();
+    // A prior interrupted run through the alias must not be bypassed by
+    // selecting the original name's otherwise matching, committed RAM.
+    let alias_ram = f.dir.join("alias.overlay.ram");
+    let mut interrupted = before.clone();
+    interrupted[10] = 1;
+    fs::write(&alias_ram, &interrupted).unwrap();
+    for path in [&f.overlay, &alias] {
+        let mut m = Machine::new(fs::read(&f.image).unwrap(), true, 16, false, None).unwrap();
+        m.attach_overlay(path, &image).unwrap();
+        assert!(m
+            .attach_memory(path, &image, None)
+            .unwrap_err()
+            .contains("multiple hard links"));
+        assert_eq!(fs::read(&ram).unwrap(), before);
+        assert_eq!(fs::read(&alias_ram).unwrap(), interrupted);
+    }
+}

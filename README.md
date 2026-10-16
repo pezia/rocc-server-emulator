@@ -44,6 +44,8 @@ CPU and controllers, and runs the bootstrap. This preserves memory needed by WMS
 restart; it does not resume the exact instruction or restore the display.
 Keep the base image, overlay, and RAM sidecar together when backing up a session.
 Use the same CPU profile and address width on subsequent runs.
+RAM persistence requires an overlay with a single filesystem link, so different
+hard-linked names cannot select inconsistent RAM snapshots for the same disk.
 
 RAM is saved on orderly exits, instruction-budget completion, HALT, and signals
 handled by interactive mode. A forced kill or crash leaves an active-session

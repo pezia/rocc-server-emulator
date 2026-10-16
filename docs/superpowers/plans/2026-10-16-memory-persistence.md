@@ -1,6 +1,6 @@
 # Memory Persistence Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Preserve RAM across orderly emulator exits so WMS can restart using its matching persistent disk overlay.
 
@@ -159,12 +159,33 @@ Ordinary decode recognizes an active marker before attempting committed checksum
 - [x] Start a separate process with the same copy and no `--cold-boot`. Assert `memory_persistence.restored == true`, `cold_boot_completed == false`, no fault, and WMS4 Main Menu. Repeat the normal boot once more.
 - [x] Run the copied pair interactively through `./boot-rocc --interactive --overlay COPY`; wait for the menu, send Ctrl-], and assert exit 0, committed RAM, user-exit report, and restored terminal settings. Keep reports private.
 - [x] Verify original image and overlay SHA-256 values are unchanged. Do not seed or alter the user's real RAM sidecar without separate authorization; provide the exact first-boot command instead.
-- [ ] Run final checks: `cargo fmt --check`, `cargo test --locked --offline`, `cargo clippy --all-targets --locked --offline -- -D warnings`, `cargo build --release --locked --offline`, `python3 tests/cli.py`, `python3 tests/regression.py --cpu`, and `git diff --check`. Require success before completion claims.
-- [ ] Use the requesting-code-review skill for one independent review of the whole persistence change, including startup ordering, alias checks, interrupted-state detection, cold recovery, and commit failure behavior. Address critical/important findings, rerun affected checks, and record the actual verification results.
-- [ ] Review and commit documentation only with `docs: explain retained RAM and WMS restart recovery`. Do not push or merge.
+- [x] Run final checks: `cargo fmt --check`, `cargo test --locked --offline`, `cargo clippy --all-targets --locked --offline -- -D warnings`, `cargo build --release --locked --offline`, `python3 tests/cli.py`, `python3 tests/regression.py --cpu`, and `git diff --check`. Require success before completion claims.
+- [x] Use the requesting-code-review skill for one independent review of the whole persistence change, including startup ordering, alias checks, interrupted-state detection, cold recovery, and commit failure behavior. Address critical/important findings, rerun affected checks, and record the actual verification results.
+- [x] Review and commit documentation only with `docs: explain retained RAM and WMS restart recovery`. Do not push or merge.
 
 ## Execution handoff
 
 Recommended method: **Native**, implementing these four dependent tasks in this session followed by one independent review. The codec and session interfaces are shared across the boot lifecycle, so keeping the implementation context together avoids repeated handoffs.
 
 The user approved this written plan and Native execution. Implementation and verification results are recorded in the execution ledger and Git history.
+
+
+## Verification results
+
+Implemented and verified in the existing submodule checkout. The final suite
+contains 92 Rust tests and 42 CLI tests, plus 8,262 frozen and 610 independent CPU
+reference cases. Formatting, Clippy with warnings denied, release compilation,
+and diff checks passed. One independent review found a disk-overlay hard-link
+namespace gap; its regression failed before the fix and passed after rejecting
+multiply linked overlays during RAM attachment.
+
+Private acceptance evidence is in `/tmp/rocc-memory-acceptance-u55w4x0g`.
+A cold boot, two separate normal restarts, and an interactive normal restart
+reached the WMS4 Main Menu. Normal restarts restored RAM without cold recovery;
+Ctrl-] saved RAM and restored terminal settings. The original image and overlay
+hashes remained unchanged. No real RAM sidecar was created for the user's original
+overlay. No remote push or merge was performed.
+
+The implementation retains the approved orderly-exit durability scope and the
+demonstrated WMS reset model. Concurrent noncooperating state-file replacement and
+library callers bypassing the machine lifecycle are outside the supported usage.

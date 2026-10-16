@@ -261,6 +261,9 @@ committed snapshot, using a private same-directory temporary, file sync, atomic
 rename, then directory sync. A failure before rename retains the active marker;
 a later failure can leave the complete new snapshot and still returns an error.
 The overlay lock is held throughout restore, execution, and snapshot publication.
+When RAM persistence is enabled, disk overlays with multiple hard links are also
+rejected: one locked disk inode must not select separate RAM sidecars through
+different hard-linked names.
 
 Sidecars and temporary files are private (`0600`, restricted by umask). Symlinks,
 nonregular files, multiple hard links, protected-file aliases, and a report path

@@ -5,6 +5,7 @@ use crate::{cpu::Cpu, devices::Bus, Fault};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::VecDeque;
+use std::os::unix::fs::MetadataExt;
 use std::{fs::File, path::Path};
 
 pub fn hex(raw: &[u8]) -> String {
@@ -159,10 +160,12 @@ impl Machine {
         }
         let overlay = self.bus.disk.overlay_identity()?;
         let overlay_path = std::fs::canonicalize(overlay_path).map_err(|e| e.to_string())?;
-        if FileIdentity::from(&std::fs::metadata(&overlay_path).map_err(|e| e.to_string())?)
-            != overlay
-        {
+        let overlay_metadata = std::fs::metadata(&overlay_path).map_err(|e| e.to_string())?;
+        if FileIdentity::from(&overlay_metadata) != overlay {
             return Err("memory path must belong to the attached disk overlay".into());
+        }
+        if overlay_metadata.nlink() != 1 {
+            return Err("memory persistence does not support disk overlays with multiple hard links; use a dedicated overlay file".into());
         }
         let mut path = overlay_path.into_os_string();
         path.push(".ram");
