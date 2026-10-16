@@ -52,6 +52,38 @@ all options. Reports must use a new filename and can contain guest memory,
 display output, image hashes, input paths, and modified disk blocks; treat them
 as private runtime artifacts.
 
+Terminal resources have independent limits in batch and interactive modes:
+
+| Option | Default | Allowed range |
+| --- | --- | --- |
+| `--event-limit N` | 4096 pending events | 1–65536 |
+| `--capture-bytes N` | 1048576 retained bytes | 1–67108864 |
+| `--packet-limit N` | 4096 retained packets | 1–65536 |
+
+A full event queue stops with `terminal_event_limit` before command effects.
+Batch capture stops with `terminal_capture_limit` before exceeding either history
+limit. Interactive capture evicts old history while preserving the current screen.
+
+To compact repeated writes into a new overlay:
+
+```sh
+./target/release/rocc-emulator compact-overlay /path/to/disk.img \
+  --overlay /path/to/session.overlay --output /path/to/compact.overlay
+```
+
+Compaction locks and validates the source, preserves it unchanged (including an
+incomplete trailing record), and writes only the latest version of each block.
+Select the new file with `--overlay` on the next boot. Existing destinations are
+never overwritten.
+
+Reports are created privately (`0600`, restricted further by the umask), streamed
+to a temporary file, synced, and published without overwriting another file.
+Report schema 2 records effective configuration, build revision, scheduled input,
+initial/final overlay identities, and separate full-stream/retained-output hashes.
+Interactive delivered-key history retains 65536 entries; `replay_complete` records
+whether earlier entries were discarded. Reports are diagnostics, not checkpoints.
+Runs without `--report` skip detailed report construction and memory hashing.
+
 ## Keyboard and display
 
 | Host key | Action |
@@ -64,6 +96,12 @@ as private runtime artifacts.
 | Tab | Send `09` |
 | Ctrl-V followed by two hexadecimal digits | Send a raw key byte |
 | Ctrl-] or Ctrl-C | Exit and restore terminal settings |
+
+Interactive SIGINT, SIGTERM, and SIGHUP request shutdown through terminal cleanup,
+then return exit status 128 + signal number after any requested report. Keyboard
+Ctrl-C/Ctrl-] retain successful `user_exit` behavior. SIGKILL cannot run cleanup.
+Host output is nonblocking with a bounded wait, including best-effort screen
+restoration if the terminal stops accepting output.
 
 Guest software determines the meaning of each byte. Historical physical key
 identities are not fully established. Unknown host key sequences are consumed
@@ -96,10 +134,17 @@ cargo test --locked
 cargo build --release --locked
 python3 tests/cli.py
 python3 tests/regression.py --cpu
+python3 tests/reference_tests.py
+python3 tests/generate_reference.py --check
+cargo fmt --check
+cargo clippy --all-targets --locked -- -D warnings
 ```
 
 The CLI tests use synthetic temporary images. The CPU regression compares
-8,262 generated instruction cases against frozen reference results. Tests
+8,262 frozen instruction cases and 610 independently generated cases, including
+64 multi-instruction programs. See [reference provenance](tests/REFERENCE.md);
+these corpora establish model consistency, not hardware fidelity. CI runs the
+suites on Rust 1.87 and stable. Tests
 require no external disk image or private credentials.
 
 ## Source layout
@@ -114,4 +159,11 @@ require no external disk image or private credentials.
 - `src/overlay.rs`: persistent overlay journal and recovery.
 - `src/terminal.rs`, `src/screen.rs`: terminal protocol and display state.
 - `src/interactive.rs`: host keyboard, rendering, and terminal lifecycle.
-- `src/machine.rs`, `src/main.rs`: orchestration, CLI, and reports.
+- `src/config.rs`, `src/fault.rs`: validated settings and typed faults.
+- `src/machine.rs`, `src/main.rs`: shared instruction clock, orchestration and CLI.
+- `src/report.rs`, `src/artifact.rs`: streaming reports and durable publication.
+- `src/signals.rs`: scoped interactive shutdown handlers.
+
+See [performance probes](docs/performance.md) for reproducible measurements and
+[machine API boundaries](docs/machine-architecture.md#11-rust-api-boundaries) for
+Rust library migration notes.

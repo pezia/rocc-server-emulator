@@ -1,6 +1,6 @@
 # Emulator Hardening Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Implement every approved audit finding and architecture recommendation while preserving the inferred machine's guest behavior and existing disk data.
 
@@ -54,8 +54,8 @@
 
 ## Execution preflight
 
-- [ ] Read the approved spec and this plan; establish an isolated workspace using the worktree skill and retain the starting revision.
-- [ ] Capture Task 10's baseline measurements before editing source. Run the existing checks once in that workspace, recording toolchain, test counts, and any environmental failures.
+- [x] Read the approved spec and this plan; establish an isolated workspace using the worktree skill and retain the starting revision.
+- [x] Capture Task 10's baseline measurements before editing source. Run the existing checks once in that workspace, recording toolchain, test counts, and any environmental failures.
 
 ## Task 1: Validated configuration and typed faults
 
@@ -68,11 +68,11 @@
 - Produce `Machine::with_config(raw: Vec<u8>, config: MachineConfig) -> Result<Self, String>`; existing `Machine::new` delegates to it.
 - Produce `Fault { kind: FaultKind, context: FaultContext }`, `Fault::reason(&self) -> &'static str`, and `Fault::details(&self) -> serde_json::Value`. Context consists of typed memory, transfer, protocol, selector, descriptor, resource, or persistence variants rather than stored JSON. Enumerate all existing reasons; no arbitrary-string fallback. Add serde derive for typed export records, with a version compatible with Rust 1.87.
 
-- [ ] Write `config_rejects_invalid_profiles_and_limits`: assert invalid width/profile/connection combinations fail, defaults equal `(4096, 1048576, 4096)`, zero and ceiling+1 values fail, exact ceilings succeed. CLI test invalid limits leave overlay/report absent.
-- [ ] Run `cargo test --locked config` and the new CLI test after building release; confirm new API/flags fail before implementation.
-- [ ] Implement interfaces and `--event-limit`, `--capture-bytes`, `--packet-limit`; parse/validate before runtime artifacts. Inventory all existing Fault constructors and migrate to enum/context constructors while preserving details keys and reason strings. Preserve current fixture JSON.
-- [ ] Run `cargo test --locked`, release build, `python3 tests/cli.py`, and `python3 tests/regression.py --cpu`; require all existing checks plus new tests to pass.
-- [ ] Commit with `refactor: validate machine configuration and type emulator faults`.
+- [x] Write `config_rejects_invalid_profiles_and_limits`: assert invalid width/profile/connection combinations fail, defaults equal `(4096, 1048576, 4096)`, zero and ceiling+1 values fail, exact ceilings succeed. CLI test invalid limits leave overlay/report absent.
+- [x] Run `cargo test --locked config` and the new CLI test after building release; confirm new API/flags fail before implementation.
+- [x] Implement interfaces and `--event-limit`, `--capture-bytes`, `--packet-limit`; parse/validate before runtime artifacts. Inventory all existing Fault constructors and migrate to enum/context constructors while preserving details keys and reason strings. Preserve current fixture JSON.
+- [x] Run `cargo test --locked`, release build, `python3 tests/cli.py`, and `python3 tests/regression.py --cpu`; require all existing checks plus new tests to pass.
+- [x] Commit with `refactor: validate machine configuration and type emulator faults`.
 
 ## Task 2: Checked memory, narrow controllers, and one execution clock
 
@@ -86,11 +86,11 @@
 - Produce `Bus::io(&mut self, memory: &mut Memory, num: u8, op: u8, pulse: u8, value: u16) -> Result<IoResult, Fault>` and analogous Disk interface; no controller receives Cpu.
 - Produce `Cpu::execute(&mut self, bus: &mut Bus) -> Result<StepInfo, Fault>` and `Machine::execute_step(cpu: &mut Cpu, bus: &mut Bus) -> Result<StepInfo, Fault>` for the shared tick/IRQ/execute path used by Machine and fixtures. Keep stepping orchestration out of Cpu.
 
-- [ ] Add `invalid_addresses_and_banks_return_faults`, `explicit_source_bank_forward_overlap_is_atomic`, and `irq_fault_preserves_actual_instruction`: assert address 65536 and bank 128 fail without panic; reject overflowed ranges including `usize::MAX`; preserve legitimate zero/end ranges; check global-only fault precedence and source-bank independence. Check IRQ save PC, failing handler word/PC, one tick/step, and no execution when clock faults.
-- [ ] Run `cargo test --locked` with these tests and observe missing API/assertion failures.
-- [ ] Implement interfaces; remove public mutable geometry/storage/global-only and duplicate configuration fields. Route DMA through checked selected-mapping ranges, with typed `DiskCompletion::{Idle, Control, Transfer { end: u16 }}`. Preserve partial register initialization and existing fault precedence. Move terminal tick/IRQ recognition to shared orchestration, migrate every fixture/test caller, and retain block-copy validation before writes.
-- [ ] Run Rust tests and both Python harnesses after a release build; frozen case count/checksum/results must remain identical.
-- [ ] Commit with `refactor: enforce memory invariants and centralize machine stepping`.
+- [x] Add `invalid_addresses_and_banks_return_faults`, `explicit_source_bank_forward_overlap_is_atomic`, and `irq_fault_preserves_actual_instruction`: assert address 65536 and bank 128 fail without panic; reject overflowed ranges including `usize::MAX`; preserve legitimate zero/end ranges; check global-only fault precedence and source-bank independence. Check IRQ save PC, failing handler word/PC, one tick/step, and no execution when clock faults.
+- [x] Run `cargo test --locked` with these tests and observe missing API/assertion failures.
+- [x] Implement interfaces; remove public mutable geometry/storage/global-only and duplicate configuration fields. Route DMA through checked selected-mapping ranges, with typed `DiskCompletion::{Idle, Control, Transfer { end: u16 }}`. Preserve partial register initialization and existing fault precedence. Move terminal tick/IRQ recognition to shared orchestration, migrate every fixture/test caller, and retain block-copy validation before writes.
+- [x] Run Rust tests and both Python harnesses after a release build; frozen case count/checksum/results must remain identical.
+- [x] Commit with `refactor: enforce memory invariants and centralize machine stepping`.
 
 ## Task 3: Bounded typed terminal events and capture
 
@@ -103,11 +103,11 @@
 - Typed `OutputState::{Unconfigured, Ready { dma: Option<u16> }}` (with separate non-output command state) determines immediate/DMA readiness. No unchecked optional-register unwrap.
 - Produce retained-byte/packet truncation flags, retained/total counters, `full_stream_sha256` and `retained_sha256` getters for Task 6.
 
-- [ ] Add `event_limit_rejects_command_atomically`, `clock_events_reserve_capacity_together`, `timer_pending_flag_tracks_pop`, `batch_packets_and_bytes_have_independent_limits`, `live_history_evicts_and_keeps_full_screen`, and `failed_transfer_preserves_dma_and_ack_state`. With event capacity 1 and simultaneous connection/timer due, assert no event/connection/timer transition occurs before fault. Test exact limits, oversized single DMA output, and event removal via all clear operations.
-- [ ] Run `cargo test --locked terminal`; verify new saturation/packet tests fail against previous behavior.
-- [ ] Implement capacity preflight before all effects, including clock events as one transaction; update elapsed instruction time once even if capacity fails. Keep timer-pending state synchronized at queue removal. Use VecDeque bytes and typed packet records; stream evicted bytes into no extra storage. Track full-stream SHA incrementally. Batch stops before either cap; tail evicts with separate flags. Keep existing reason `terminal_capture_limit` for byte/packet capture exhaustion and `terminal_event_limit` for events.
-- [ ] Run terminal/integration tests, all Rust tests, and both Python harnesses; verify former 100000-event reproduction stops at the configured bound and screen state survives tail eviction.
-- [ ] Commit with `fix: bound terminal queues and diagnostic capture`.
+- [x] Add `event_limit_rejects_command_atomically`, `clock_events_reserve_capacity_together`, `timer_pending_flag_tracks_pop`, `batch_packets_and_bytes_have_independent_limits`, `live_history_evicts_and_keeps_full_screen`, and `failed_transfer_preserves_dma_and_ack_state`. With event capacity 1 and simultaneous connection/timer due, assert no event/connection/timer transition occurs before fault. Test exact limits, oversized single DMA output, and event removal via all clear operations.
+- [x] Run `cargo test --locked terminal`; verify new saturation/packet tests fail against previous behavior.
+- [x] Implement capacity preflight before all effects, including clock events as one transaction; update elapsed instruction time once even if capacity fails. Keep timer-pending state synchronized at queue removal. Use VecDeque bytes and typed packet records; stream evicted bytes into no extra storage. Track full-stream SHA incrementally. Batch stops before either cap; tail evicts with separate flags. Keep existing reason `terminal_capture_limit` for byte/packet capture exhaustion and `terminal_event_limit` for events.
+- [x] Run terminal/integration tests, all Rust tests, and both Python harnesses; verify former 100000-event reproduction stops at the configured bound and screen state survives tail eviction.
+- [x] Commit with `fix: bound terminal queues and diagnostic capture`.
 
 ## Task 4: Scoped signal shutdown and terminal cleanup
 
@@ -117,11 +117,11 @@
 - Produce crate-private `SignalSession::enter() -> io::Result<Self>`, `pending_signal(&self) -> Option<i32>`, and Drop restoring prior sigactions. Use a signal-safe atomic flag; reject concurrent host sessions in one process instead of clobbering global state.
 - Produce typed `InteractiveOutcome { signal: Option<i32>, keys_delivered: u64, keys_pending: usize, notices: Vec<String> }`; main returns a numeric exit code after reports, while preserving existing CLI error formatting.
 
-- [ ] Add PTY tests `test_signals_restore_terminal_and_publish_report` for SIGINT/SIGTERM/SIGHUP: wait for raw-mode screen entry, send signal, drain output, assert exact original termios, report signal reason, and status `128 + signo`. Add handler-install/partial-setup restoration tests and a subprocess timeout for blocked terminal output.
-- [ ] Build release and run the new PTY tests; confirm the previous implementation fails restoration/status assertions.
-- [ ] Install handlers before raw mode; handler only stores the signal number. Use bounded nonblocking/poll-based host output writes that check shutdown, so a full output queue cannot indefinitely delay restoration. Check signals during setup/read/render and normal loop boundaries; cleanup restores termios even if rendering fails. Report terminal cleanup failures explicitly without masking the original failure. Make cleanup output best effort and bounded.
-- [ ] Run Rust signal guard tests and `python3 tests/cli.py`; verify keyboard Ctrl-C/Ctrl-] still exit successfully as user_exit and guest-fault restoration remains intact.
-- [ ] Commit with `fix: restore interactive terminals on termination signals`.
+- [x] Add PTY tests `test_signals_restore_terminal_and_publish_report` for SIGINT/SIGTERM/SIGHUP: wait for raw-mode screen entry, send signal, drain output, assert exact original termios, report signal reason, and status `128 + signo`. Add handler-install/partial-setup restoration tests and a subprocess timeout for blocked terminal output.
+- [x] Build release and run the new PTY tests; confirm the previous implementation fails restoration/status assertions.
+- [x] Install handlers before raw mode; handler only stores the signal number. Use bounded nonblocking/poll-based host output writes that check shutdown, so a full output queue cannot indefinitely delay restoration. Check signals during setup/read/render and normal loop boundaries; cleanup restores termios even if rendering fails. Report terminal cleanup failures explicitly without masking the original failure. Make cleanup output best effort and bounded.
+- [x] Run Rust signal guard tests and `python3 tests/cli.py`; verify keyboard Ctrl-C/Ctrl-] still exit successfully as user_exit and guest-fault restoration remains intact.
+- [x] Commit with `fix: restore interactive terminals on termination signals`.
 
 ## Task 5: Shared private durable artifact publication
 
@@ -131,11 +131,11 @@
 - Produce `check_destination(path: &Path) -> io::Result<PathBuf>` and `publish_new<F>(dest: &Path, write: F) -> io::Result<()> where F: FnOnce(&mut File) -> io::Result<()>` in a library-exported artifact module usable by the separate main binary, reports, and overlay tooling. Use parent-relative unique create_new temp files at mode 0600 and no-overwrite hard-link publication on supported POSIX filesystems.
 - Internal test-only file-operation injection covers write, file-sync, link, unlink, and directory-sync failures; no new production CLI testing flags.
 
-- [ ] Add `test_report_permissions_ignore_permissive_umask` for 000/022, existing-destination/symlink tests, and unit tests `raced_destination_is_preserved`, `writer_error_cleans_temporary`, `directory_sync_failure_is_reported`. Assert output permissions 0600 and no original bytes change. A failure after successful publication must leave the published complete file and return an error describing that outcome.
-- [ ] Run targeted tests after building release; confirm 0644 permissions under umask 022 before the fix.
-- [ ] Implement publication ordering: write, sync file, link without overwrite, remove temp, sync parent. On post-link cleanup failure still attempt directory sync; on any failure preserve published/existing destination and clean temp when possible. Validate destination before execution but rely on publication for race safety.
-- [ ] Run all artifact tests and CLI harness; verify output stays parseable/complete, never overwrites, and permissions are correct from creation.
-- [ ] Commit with `fix: publish runtime artifacts privately and durably`.
+- [x] Add `test_report_permissions_ignore_permissive_umask` for 000/022, existing-destination/symlink tests, and unit tests `raced_destination_is_preserved`, `writer_error_cleans_temporary`, `directory_sync_failure_is_reported`. Assert output permissions 0600 and no original bytes change. A failure after successful publication must leave the published complete file and return an error describing that outcome.
+- [x] Run targeted tests after building release; confirm 0644 permissions under umask 022 before the fix.
+- [x] Implement publication ordering: write, sync file, link without overwrite, remove temp, sync parent. On post-link cleanup failure still attempt directory sync; on any failure preserve published/existing destination and clean temp when possible. Validate destination before execution but rely on publication for race safety.
+- [x] Run all artifact tests and CLI harness; verify output stays parseable/complete, never overwrites, and permissions are correct from creation.
+- [x] Commit with `fix: publish runtime artifacts privately and durably`.
 
 ## Task 6: Lightweight summaries and versioned streaming reports
 
@@ -148,11 +148,11 @@
 - Replay history capacity is 65536 delivered interactive keys, evicting oldest entries with `replay_complete=false`; input records use `{step: u64, byte: u8}`. Batch schedules already present in CLI configuration are serialized directly, not duplicated into delivery history.
 - Define overlay-state SHA-256 over ascending entries encoded as `offset:u64 big-endian || block:[u8;256]`, including a fixed format domain prefix `ROCC-OVERLAY-STATE-1`; empty state uses that prefix alone. Freeze initial digest after attach; report final separately.
 
-- [ ] Add `summary_does_not_visit_report_data` using test-only hash/export counters, `streamed_report_matches_legacy_fields`, `metadata_distinguishes_address_width_and_initial_overlay`, and `replay_and_digest_scopes_are_explicit`. Assert summary performs zero memory-hash/overlay-export operations; ensure tail eviction changes retained digest but not full-stream digest. Verify exact 65536-key history and truncation flag.
-- [ ] Run targeted tests; confirm old unconditional reporting/absent metadata fails new assertions.
-- [ ] Implement borrowed serde Serialize views/SerializeSeq for packets, memory-backed fields, and changed blocks. Hash memory with three-byte scratch per physical cell, keeping legacy encoding; encode each disk block with fixed 512-byte hex scratch. No whole-report Value or cloned disk map on normal CLI path. Serialize only when requested through Task 5 helper. Keep a convenience in-memory report API only for explicit library callers/tests if needed, delegating to the same serializer.
-- [ ] Run Rust tests and both harnesses; compare parsed legacy fields on synthetic runs and check report/no-report summaries agree. Verify build metadata fallback without a .git directory and normal worktree builds.
-- [ ] Commit with `refactor: stream versioned reports and avoid unused exports`.
+- [x] Add `summary_does_not_visit_report_data` using test-only hash/export counters, `streamed_report_matches_legacy_fields`, `metadata_distinguishes_address_width_and_initial_overlay`, and `replay_and_digest_scopes_are_explicit`. Assert summary performs zero memory-hash/overlay-export operations; ensure tail eviction changes retained digest but not full-stream digest. Verify exact 65536-key history and truncation flag.
+- [x] Run targeted tests; confirm old unconditional reporting/absent metadata fails new assertions.
+- [x] Implement borrowed serde Serialize views/SerializeSeq for packets, memory-backed fields, and changed blocks. Hash memory with three-byte scratch per physical cell, keeping legacy encoding; encode each disk block with fixed 512-byte hex scratch. No whole-report Value or cloned disk map on normal CLI path. Serialize only when requested through Task 5 helper. Keep a convenience in-memory report API only for explicit library callers/tests if needed, delegating to the same serializer.
+- [x] Run Rust tests and both harnesses; compare parsed legacy fields on synthetic runs and check report/no-report summaries agree. Verify build metadata fallback without a .git directory and normal worktree builds.
+- [x] Commit with `refactor: stream versioned reports and avoid unused exports`.
 
 ## Task 7: Locked nonmutating overlay compaction
 
@@ -163,11 +163,11 @@
 - Factor source replay into `ReplayPolicy::{RecoverTail, PreserveSource}`: boot retains existing partial-tail recovery; compaction rejects invalid complete records but ignores incomplete trailing bytes without truncating the source. Compaction never creates a missing source.
 - Consume Task 5 publication helper; source lock guard remains alive until destination publication/directory sync completes.
 
-- [ ] Add tests `test_compaction_preserves_source_and_boot_state`, `test_compaction_honors_lock_and_rejects_aliases`, `test_compaction_rejects_corrupt_source_without_output`, `test_compaction_preserves_incomplete_tail`, plus injected destination-write/sync failure tests. Repeated writes to one block compact to `48 + 296` bytes; source/base hashes remain unchanged; reboots produce equivalent state.
-- [ ] Run new CLI tests after a release build and observe the absent command fail.
-- [ ] Implement exact CLI `compact-overlay IMAGE --overlay SOURCE --output NEWPATH`; validate image, source identity/regular-file/no-symlink policy, header/checksums/offsets and new destination. Lock source nonblocking, then write deterministic latest-block records to private output. Never replace original journal; print byte/block statistics.
-- [ ] Run full CLI suite plus Rust overlay/artifact tests, including contention and a source with an incomplete final append; require no source-byte mutation in every compaction outcome.
-- [ ] Commit with `feat: export compacted disk overlay journals safely`.
+- [x] Add tests `test_compaction_preserves_source_and_boot_state`, `test_compaction_honors_lock_and_rejects_aliases`, `test_compaction_rejects_corrupt_source_without_output`, `test_compaction_preserves_incomplete_tail`, plus injected destination-write/sync failure tests. Repeated writes to one block compact to `48 + 296` bytes; source/base hashes remain unchanged; reboots produce equivalent state.
+- [x] Run new CLI tests after a release build and observe the absent command fail.
+- [x] Implement exact CLI `compact-overlay IMAGE --overlay SOURCE --output NEWPATH`; validate image, source identity/regular-file/no-symlink policy, header/checksums/offsets and new destination. Lock source nonblocking, then write deterministic latest-block records to private output. Never replace original journal; print byte/block statistics.
+- [x] Run full CLI suite plus Rust overlay/artifact tests, including contention and a source with an incomplete final append; require no source-byte mutation in every compaction outcome.
+- [x] Commit with `feat: export compacted disk overlay journals safely`.
 
 ## Task 8: Independent reference generation and integrated machine tests
 
@@ -178,11 +178,11 @@
 - `python3 tests/generate_reference.py --check` compares checked-in generated corpus bytes; default writes the new corpus only. JSON uses sorted keys/fixed indentation and no time-dependent metadata.
 - Extend `tests/regression.py --cpu` to validate both the unchanged frozen corpus and the new corpus and report their counts separately; all subprocess.run/communicate/wait operations in harnesses receive bounded timeouts (CPU regression 120 seconds, short CLI operations 15 seconds).
 
-- [ ] Specify new corpus hand-check cases: ADD `ffff+1` with carry variants, SUB equal operands, 17-bit rotates, NL preserving registers/carry, signed relative wrap, autoindex original continuation bit. Add integration programs for ION delay/masked disk-vs-terminal priority, bank-switch/DMA/readback, terminal event tuple consumption, and a combined timer/IRQ/bank/DMA sequence. Pin expected transitions from documented semantics, including zero-count block move and exact-end/out-of-bounds/unknown-source DMA.
-- [ ] Run these named tests/corpus comparison before generator implementation to establish missing coverage; do not regenerate or edit the old gzip corpus/checksum.
-- [ ] Implement independent model/generator and program builders; verify model basics with hand-calculated assertions before generating broader deterministic cases. Document that legacy oracle provenance remains unknown beyond its existing seed/description. Add state-transition/atomicity assertions for new typed terminal/disk protocols.
-- [ ] Run generator `--check`, Rust integration tests, release build, both harnesses. Check SHA256 of decompressed frozen corpus remains `f0e281511050716f1ea3f8b53f321b3bd896f7a209b264427d5a7df68651ae07` and count remains 8262.
-- [ ] Commit with `test: add reproducible reference and machine integration coverage`.
+- [x] Specify new corpus hand-check cases: ADD `ffff+1` with carry variants, SUB equal operands, 17-bit rotates, NL preserving registers/carry, signed relative wrap, autoindex original continuation bit. Add integration programs for ION delay/masked disk-vs-terminal priority, bank-switch/DMA/readback, terminal event tuple consumption, and a combined timer/IRQ/bank/DMA sequence. Pin expected transitions from documented semantics, including zero-count block move and exact-end/out-of-bounds/unknown-source DMA.
+- [x] Run these named tests/corpus comparison before generator implementation to establish missing coverage; do not regenerate or edit the old gzip corpus/checksum.
+- [x] Implement independent model/generator and program builders; verify model basics with hand-calculated assertions before generating broader deterministic cases. Document that legacy oracle provenance remains unknown beyond its existing seed/description. Add state-transition/atomicity assertions for new typed terminal/disk protocols.
+- [x] Run generator `--check`, Rust integration tests, release build, both harnesses. Check SHA256 of decompressed frozen corpus remains `f0e281511050716f1ea3f8b53f321b3bd896f7a209b264427d5a7df68651ae07` and count remains 8262.
+- [x] Commit with `test: add reproducible reference and machine integration coverage`.
 
 ## Task 9: MSRV and stable continuous integration
 
@@ -190,11 +190,11 @@
 
 **Interfaces:** Workflow push/pull_request jobs use read-only contents permissions; Ubuntu matrix Rust `1.87.0` and `stable`, Python 3, locked dependencies; stable-only lint job.
 
-- [ ] Check available toolchains with `rustup toolchain list`; attempt `cargo +1.87.0 test --locked` and release build. If installation/network access is required, use the normal permission mechanism and report genuine environment blockers without claiming verification.
-- [ ] Add matrix commands `cargo test --locked`, `cargo build --release --locked`, `python3 tests/cli.py`, `python3 tests/regression.py --cpu`, and generator `--check`; stable lint commands `cargo fmt --check` and `cargo clippy --all-targets --locked -- -D warnings`. Set job timeouts; no credentials/private image dependencies.
-- [ ] Resolve demonstrated MSRV dependency incompatibilities by choosing compatible versions and updating the lockfile, keeping rust-version 1.87. Do not alter dependencies speculatively.
-- [ ] Run the complete matrix locally where toolchains are available; inspect workflow commands against tested invocations. State clearly if remote Actions execution has not occurred.
-- [ ] Commit with `ci: verify emulator on minimum and stable Rust`.
+- [x] Check available toolchains with `rustup toolchain list`; attempt `cargo +1.87.0 test --locked` and release build. If installation/network access is required, use the normal permission mechanism and report genuine environment blockers without claiming verification.
+- [x] Add matrix commands `cargo test --locked`, `cargo build --release --locked`, `python3 tests/cli.py`, `python3 tests/regression.py --cpu`, and generator `--check`; stable lint commands `cargo fmt --check` and `cargo clippy --all-targets --locked -- -D warnings`. Set job timeouts; no credentials/private image dependencies.
+- [x] Resolve demonstrated MSRV dependency incompatibilities by choosing compatible versions and updating the lockfile, keeping rust-version 1.87. Do not alter dependencies speculatively.
+- [x] Run the complete matrix locally where toolchains are available; inspect workflow commands against tested invocations. State clearly if remote Actions execution has not occurred.
+- [x] Commit with `ci: verify emulator on minimum and stable Rust`.
 
 ## Task 10: Performance evidence, documentation, and whole-change verification
 

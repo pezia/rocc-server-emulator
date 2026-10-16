@@ -29,6 +29,10 @@ fn help() {
     println!(
         "Native ROCC emulator (experimental inferred hardware)\n\
 Usage: rocc-emulator boot IMAGE [OPTIONS]\n\
+  --event-limit N          Pending terminal events: default 4096, max 65536\n\
+  --capture-bytes N        Retained bytes: default 1048576, max 67108864\n\
+  --packet-limit N         Retained packets: default 4096, max 65536\n\
+  compact-overlay IMAGE --overlay SOURCE --output NEWPATH\n\
   --keymap PATH             JSON host-key to raw ROCC-byte bindings (interactive)\n\
   --interactive             Live terminal (Ctrl-] or Ctrl-C exits)\n\
   --steps N                 Instructions: default 1000000, unlimited live\n\
