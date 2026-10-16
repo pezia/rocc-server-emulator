@@ -4,6 +4,9 @@ pub mod interactive;
 pub mod machine;
 pub mod memory;
 mod overlay;
+#[allow(dead_code)] // Session wiring is added by the next implementation tasks.
+mod persistence;
+pub use persistence::MemoryStatus;
 pub mod screen;
 pub mod terminal;
 

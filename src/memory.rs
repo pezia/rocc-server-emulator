@@ -190,6 +190,29 @@ impl Memory {
     pub fn iter_physical(&self) -> impl Iterator<Item = Option<u16>> + '_ {
         self.storage.iter().copied()
     }
+    pub(crate) fn snapshot_bytes(&self) -> Vec<u8> {
+        let mut raw = Vec::with_capacity(self.storage.len() * 3);
+        for cell in &self.storage {
+            raw.push(u8::from(cell.is_some()));
+            raw.extend_from_slice(&cell.unwrap_or(0).to_be_bytes());
+        }
+        raw
+    }
+    pub(crate) fn restore_snapshot_bytes(&mut self, raw: &[u8]) -> Result<(), String> {
+        if raw.len() != self.storage.len() * 3 {
+            return Err("memory payload length does not match configured geometry".into());
+        }
+        let cells = raw
+            .chunks_exact(3)
+            .map(|cell| match cell {
+                [0, 0, 0] => Ok(None),
+                [1, high, low] => Ok(Some(u16::from_be_bytes([*high, *low]))),
+                _ => Err("invalid memory cell flag or noncanonical unknown word".to_owned()),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        self.storage = cells;
+        Ok(())
+    }
     pub(crate) fn physical_get(&self, p: usize) -> Option<u16> {
         self.storage.get(p).copied().flatten()
     }
@@ -207,6 +230,46 @@ impl Memory {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn physical_snapshot_preserves_unknown_zero_and_all_banks() {
+        let mut m = crate::cpu::Cpu::new(16, true).unwrap().memory;
+        m.initialize_physical(0, 0).unwrap();
+        m.initialize_physical(10941, 0x1234).unwrap();
+        m.initialize_physical(585727, 0xabcd).unwrap();
+        let raw = m.snapshot_bytes();
+        assert_eq!(raw.len(), 1_757_184);
+        let mut restored = crate::cpu::Cpu::new(16, true).unwrap().memory;
+        restored.restore_snapshot_bytes(&raw).unwrap();
+        assert_eq!(
+            restored.iter_physical().collect::<Vec<_>>(),
+            m.iter_physical().collect::<Vec<_>>()
+        );
+        assert_eq!(restored.peek(0).unwrap(), Some(0));
+        assert_eq!(restored.peek(1).unwrap(), None);
+    }
+    #[test]
+    fn invalid_memory_payload_is_atomic() {
+        let mut m = crate::cpu::Cpu::new(15, false).unwrap().memory;
+        m.write(0, 123).unwrap();
+        let before = m.snapshot_bytes();
+        for raw in [
+            vec![0; 3],
+            {
+                let mut r = before.clone();
+                r[0] = 2;
+                r
+            },
+            {
+                let mut r = before.clone();
+                r[0] = 0;
+                r[2] = 1;
+                r
+            },
+        ] {
+            assert!(m.restore_snapshot_bytes(&raw).is_err());
+            assert_eq!(m.snapshot_bytes(), before);
+        }
+    }
     #[test]
     fn bank_switch_preserves_global_and_isolates_local() {
         let mut m = crate::cpu::Cpu::new(16, true).unwrap().memory;
