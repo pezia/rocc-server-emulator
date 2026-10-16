@@ -162,7 +162,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::io;
 use std::time::{Duration, Instant};
 
-/// Host names are deliberately separate from unverified physical key labels.
+/// Host names allow overrides independently of historical physical key labels.
 pub fn parse_keymap(raw: &str) -> Result<BTreeMap<String, u8>, String> {
     let entries: BTreeMap<String, String> =
         serde_json::from_str(raw).map_err(|e| format!("invalid keymap: {e}"))?;
@@ -347,11 +347,11 @@ impl Keyboard {
                 if (0x40..=0x7e).contains(&b) {
                     self.escape = Escape::None;
                     if let Some(name) = host_sequence(&self.sequence) {
-                        // Physical key identities are unresolved. Guest software
-                        // determines each raw byte's action; bindings take priority.
+                        // Observed WMS behavior identifies F1/93 as REL and Esc/95 as HELP.
+                        // F2/97 is assumed to be CORR; bindings take priority.
                         let fallback = match name {
                             "F1" => Some(0x93),
-                            // Additional guest control; physical keycap unresolved.
+                            // CORR (Correction), assumed physical key identity.
                             "F2" => Some(0x97),
                             _ => None,
                         };

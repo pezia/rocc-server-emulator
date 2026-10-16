@@ -195,9 +195,9 @@ hashing. RAM snapshots still compute their integrity checksum.
 
 | Host key | Action |
 | --- | --- |
-| Escape | Send raw `95` |
-| F1 | Send raw `93` |
-| F2 | Send raw `97` |
+| Escape | HELP, raw `95` |
+| F1 | REL (Release), raw `93` |
+| F2 | CORR (Correction), raw `97` |
 | Enter | Send CR (`0d`) |
 | Backspace | Send `08` |
 | Tab | Send `09` |
@@ -210,8 +210,10 @@ Ctrl-C/Ctrl-] retain successful `user_exit` behavior. SIGKILL cannot run cleanup
 Host output is nonblocking with a bounded wait, including best-effort screen
 restoration if the terminal stops accepting output.
 
-Guest software determines the meaning of each byte. Historical physical key
-identities are not fully established. Unknown host key sequences are consumed
+F1 appears to correspond to the original REL (Release) key, and Escape to HELP,
+based on observed guest behavior. F2 is assumed to correspond to CORR
+(Correction), raw `97`, which acknowledges WMS error screens. Other historical
+physical key identities are not fully established. Unknown host key sequences are consumed
 atomically rather than leaking their suffixes into guest input.
 
 Override host mappings with a JSON file:
