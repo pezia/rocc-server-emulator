@@ -17,6 +17,109 @@ def writing_image():
     for address,word in words.items():raw[address*2:address*2+2]=word.to_bytes(2,'big')
     return bytes(raw)
 
+def retaining_image(loop=False):
+    raw=bytearray(6144)
+    words={127:0,0:0x2464,1:0x8300,2:0x4464,3:3 if loop else 0x663f,100:10941}
+    for address,word in words.items():raw[2*address:2*address+2]=word.to_bytes(2,'big')
+    return bytes(raw)
+
+class MemoryCliTests(unittest.TestCase):
+    def boot(self,image,*args,**kwargs):
+        return run([BINARY,'boot',image,'--steps','20',*args],capture_output=True,text=True,**kwargs)
+    def test_default_memory_changes_next_boot(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            image=Path(tmp)/'disk';raw=retaining_image();image.write_bytes(raw)
+            for count in (1,2,3):
+                report=Path(tmp)/f'{count}.json';p=self.boot(image,'--report',report)
+                self.assertEqual(p.returncode,0,p.stderr);r=json.loads(report.read_text())
+                self.assertEqual(r['state']['ac'][0],count)
+                self.assertEqual(r['memory_persistence']['restored'],count>1)
+                self.assertTrue(r['memory_persistence']['committed'])
+            self.assertEqual(image.read_bytes(),raw)
+    def test_custom_overlay_pairs_memory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            image=Path(tmp)/'disk';image.write_bytes(retaining_image());overlay=Path(tmp)/'custom'
+            self.assertEqual(self.boot(image,'--overlay',overlay).returncode,0)
+            self.assertTrue(Path(str(overlay)+'.ram').exists())
+            self.assertFalse(Path(str(image)+'.overlay.ram').exists())
+    def test_no_memory_skips_load_and_save(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            image=Path(tmp)/'disk';image.write_bytes(retaining_image());ram=Path(str(image)+'.overlay.ram')
+            p=self.boot(image,'--no-memory');self.assertEqual(p.returncode,0,p.stderr);self.assertFalse(ram.exists())
+            self.assertEqual(self.boot(image).returncode,0);saved=ram.read_bytes();report=Path(tmp)/'disabled.json'
+            p=self.boot(image,'--no-memory','--report',report);self.assertEqual(p.returncode,0,p.stderr)
+            r=json.loads(report.read_text());self.assertEqual(r['state']['ac'][0],1);self.assertFalse(r['memory_persistence']['enabled']);self.assertEqual(ram.read_bytes(),saved)
+    def test_stateless_disk_write_invalidates_saved_ram(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            image=Path(tmp)/'disk';raw=bytearray(6144)
+            words={127:0,100:1,101:128,102:0,103:0x1001}
+            words.update(enumerate([0x2064,0x621b,0x2065,0x641b,0x3866,0x7e5b,0x2080,0x8300,0x4080,0x2067,0x621b,0x7e5b,0x663f]))
+            for address,word in words.items():raw[2*address:2*address+2]=word.to_bytes(2,'big')
+            image.write_bytes(raw);self.assertEqual(self.boot(image).returncode,0)
+            ram=Path(str(image)+'.overlay.ram');saved=ram.read_bytes()
+            p=self.boot(image,'--no-memory');self.assertEqual(p.returncode,0,p.stderr)
+            p=self.boot(image);self.assertNotEqual(p.returncode,0);self.assertIn('disk state mismatch',p.stderr);self.assertEqual(ram.read_bytes(),saved)
+    def test_cold_boot_replaces_recognized_bad_ram(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            image=Path(tmp)/'disk';image.write_bytes(retaining_image());self.assertEqual(self.boot(image,'--profile','extended').returncode,0)
+            ram=Path(str(image)+'.overlay.ram');bad=bytearray(ram.read_bytes());bad[160]^=1;ram.write_bytes(bad)
+            p=self.boot(image,'--profile','extended');self.assertNotEqual(p.returncode,0);self.assertIn('checksum mismatch',p.stderr)
+            report=Path(tmp)/'cold.json';p=self.boot(image,'--profile','extended','--cold-boot','--report',report)
+            self.assertEqual(p.returncode,0,p.stderr);r=json.loads(report.read_text());self.assertFalse(r['memory_persistence']['restored']);self.assertTrue(r['memory_persistence']['bypassed_for_cold_boot']);self.assertTrue(r['memory_persistence']['committed'])
+    def test_report_alias_is_rejected_before_memory_begin(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            image=Path(tmp)/'disk';image.write_bytes(retaining_image());ram=Path(str(image)+'.overlay.ram')
+            p=self.boot(image,'--report',ram);self.assertNotEqual(p.returncode,0);self.assertIn('separate paths',p.stderr);self.assertFalse(ram.exists())
+    def test_sidecar_permissions_under_permissive_umask(self):
+        for mask in (0,0o022):
+            with self.subTest(mask=mask),tempfile.TemporaryDirectory() as tmp:
+                image=Path(tmp)/'disk';image.write_bytes(retaining_image())
+                for _ in range(2):
+                    p=self.boot(image,umask=mask);self.assertEqual(p.returncode,0,p.stderr)
+                    self.assertEqual(Path(str(image)+'.overlay.ram').stat().st_mode&0o777,0o600)
+    def test_profile_mismatch_preserves_snapshot(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            image=Path(tmp)/'disk';image.write_bytes(retaining_image());self.assertEqual(self.boot(image).returncode,0)
+            ram=Path(str(image)+'.overlay.ram');saved=ram.read_bytes()
+            p=self.boot(image,'--profile','extended');self.assertNotEqual(p.returncode,0)
+            self.assertIn('geometry',p.stderr);self.assertEqual(ram.read_bytes(),saved)
+    def test_save_failure_is_not_success(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            image=Path(tmp)/'disk';image.write_bytes(retaining_image())
+            def limit():
+                resource.setrlimit(resource.RLIMIT_FSIZE,(200,200));signal.signal(signal.SIGXFSZ,signal.SIG_IGN)
+            p=self.boot(image,preexec_fn=limit);self.assertNotEqual(p.returncode,0);self.assertIn('memory',p.stderr)
+            self.assertEqual(Path(str(image)+'.overlay.ram').read_bytes()[10],1)
+    def wait_active(self,ram,process):
+        deadline=time.monotonic()+5
+        while time.monotonic()<deadline:
+            if ram.exists() and len(raw:=ram.read_bytes())>=160 and raw[10]==1:return
+            if process.poll() is not None:self.fail(repr(process.communicate(timeout=5)))
+            time.sleep(.005)
+        self.fail('RAM active marker not observed')
+    def test_killed_session_without_disk_writes_requires_recovery(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            image=Path(tmp)/'disk';image.write_bytes(retaining_image(loop=True));self.assertEqual(self.boot(image,'--profile','extended').returncode,0)
+            ram=Path(str(image)+'.overlay.ram');overlay=Path(str(image)+'.overlay');saved_disk=overlay.read_bytes()
+            p=subprocess.Popen([BINARY,image,'--profile','extended','--steps','100000000'],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+            try:self.wait_active(ram,p)
+            finally:
+                if p.poll() is None:p.kill()
+                p.communicate(timeout=5)
+            self.assertEqual(overlay.read_bytes(),saved_disk)
+            saved=ram.read_bytes();p=self.boot(image,'--profile','extended');self.assertNotEqual(p.returncode,0);self.assertIn('interrupted',p.stderr);self.assertEqual(ram.read_bytes(),saved)
+            p=self.boot(image,'--profile','extended','--cold-boot');self.assertEqual(p.returncode,0,p.stderr);self.assertEqual(ram.read_bytes()[10],0)
+    def test_report_failure_does_not_lose_ram_save(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            image=Path(tmp)/'disk';image.write_bytes(retaining_image(loop=True));report=Path(tmp)/'report';ram=Path(str(image)+'.overlay.ram')
+            p=subprocess.Popen([BINARY,image,'--steps','10000000','--report',report],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+            try:
+                self.wait_active(ram,p);report.write_text('keep this file');out,err=p.communicate(timeout=15)
+                self.assertNotEqual(p.returncode,0,repr(out));self.assertIn(b'destination already exists',err)
+                self.assertEqual(report.read_text(),'keep this file');self.assertEqual(ram.read_bytes()[10],0)
+            finally:
+                if p.poll() is None:p.kill();p.communicate(timeout=5)
+
 class CliTests(unittest.TestCase):
     def boot(self,image,*args):
         return run([BINARY,'boot',image,'--steps','20',*args],capture_output=True,text=True)
@@ -203,14 +306,14 @@ class CliTests(unittest.TestCase):
             def limit_writes():
                 resource.setrlimit(resource.RLIMIT_FSIZE,(100,100))
                 signal.signal(signal.SIGXFSZ,signal.SIG_IGN)
-            p=run([BINARY,'boot',image,'--steps','20'],capture_output=True,text=True,preexec_fn=limit_writes)
+            p=run([BINARY,'boot',image,'--steps','20','--no-memory'],capture_output=True,text=True,preexec_fn=limit_writes)
             self.assertNotEqual(p.returncode,0)
             self.assertIn('disk_overlay_write',p.stderr)
             self.assertIn('0 writes',p.stdout)
             self.assertEqual(image.read_bytes(),original)
             # Retry recovers the incomplete failed append and completes the write.
             report=Path(tmp)/'retry.json'
-            p=self.boot(image,'--report',report)
+            p=self.boot(image,'--no-memory','--report',report)
             self.assertEqual(p.returncode,0,p.stderr)
             self.assertEqual(json.loads(report.read_text())['disk_writes'],1)
 
@@ -219,7 +322,7 @@ class CliTests(unittest.TestCase):
             image=Path(tmp)/'disk';raw=bytearray(writing_image())
             raw[16:18]=(8).to_bytes(2,'big') # Loop after the write instead of exiting.
             image.write_bytes(raw);overlay=Path(str(image)+'.overlay')
-            p=subprocess.Popen([BINARY,'boot',image,'--steps','100000000'],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+            p=subprocess.Popen([BINARY,'boot',image,'--steps','100000000','--no-memory'],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
             try:
                 deadline=time.monotonic()+5
                 while time.monotonic()<deadline:
@@ -230,7 +333,7 @@ class CliTests(unittest.TestCase):
             finally:
                 p.kill();p.communicate(timeout=5)
             report=Path(tmp)/'resumed.json'
-            p=self.boot(image,'--report',report)
+            p=self.boot(image,'--no-memory','--report',report)
             self.assertEqual(p.returncode,0,p.stderr)
             self.assertEqual(json.loads(report.read_text())['steps'],2)
             self.assertEqual(image.read_bytes(),raw)
@@ -317,6 +420,8 @@ class CliTests(unittest.TestCase):
                     self.assertEqual(p.poll(),128+sig)
                     self.assertEqual(termios.tcgetattr(slave),original)
                     self.assertEqual(json.loads(report.read_text())['interactive']['signal'],sig)
+                    self.assertTrue(json.loads(report.read_text())['memory_persistence']['committed'])
+                    self.assertEqual(Path(str(image)+'.overlay.ram').read_bytes()[10],0)
                 finally:
                     if p is not None and p.poll() is None:p.kill();p.wait(timeout=5)
                     termios.tcsetattr(slave,termios.TCSANOW,original);os.close(master);os.close(slave)

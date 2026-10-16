@@ -45,6 +45,7 @@ Usage: rocc-emulator boot IMAGE [OPTIONS]\n\
   --keymap PATH             JSON host-key to raw ROCC-byte bindings (interactive)\n\
   --interactive             Live terminal (Ctrl-] or Ctrl-C exits)\n\
   --cold-boot               Operate the WMS loader cold-start panel sequence\n\
+  --no-memory               Disable retained RAM loading and saving\n\
   --steps N                 Instructions: default 1000000, unlimited live\n\
   --profile loader|extended Default loader, extended for live\n\
   --terminal none|experimental\n\
@@ -112,6 +113,7 @@ fn run() -> Result<i32, String> {
     let mut terminal = None;
     let mut interactive = false;
     let mut cold_boot = false;
+    let mut memory = true;
     let mut keymap = None;
     let mut steps = None;
     let mut connect = None;
@@ -126,6 +128,10 @@ fn run() -> Result<i32, String> {
         }
         if arg == "--cold-boot" {
             cold_boot = true;
+            continue;
+        }
+        if arg == "--no-memory" {
+            memory = false;
             continue;
         }
         if arg == "--help" || arg == "-h" {
@@ -281,6 +287,9 @@ fn run() -> Result<i32, String> {
     if destination.as_ref() == Some(&overlay_path) {
         return Err("report and overlay must use separate paths".into());
     }
+    if memory {
+        m.attach_memory(&overlay_path, &image_file, destination.as_deref())?;
+    }
     let interactive_report = if interactive {
         Some(rocc_emulator::interactive::run(&mut m, steps, bindings)?)
     } else {
@@ -296,6 +305,7 @@ fn run() -> Result<i32, String> {
         }
         None
     };
+    m.finish_memory()?;
     let elapsed = started.elapsed().as_secs_f64();
     let signal = interactive_report.as_ref().and_then(|r| r.signal);
     let mut final_output = String::new();
@@ -326,6 +336,24 @@ fn run() -> Result<i32, String> {
         summary.reason, summary.pc, summary.steps
     ));
     final_output.push_str(&format!("Disk: {} reads, {} writes to persistent overlay ({} blocks). Original image unchanged.\nOverlay: {}\n",summary.disk_reads,summary.disk_writes,summary.overlay_blocks,overlay.display()));
+    let ram = m.memory_status();
+    if ram.enabled {
+        final_output.push_str(&format!(
+            "RAM: {}, {}.\n",
+            if ram.restored {
+                "restored"
+            } else {
+                "initialized"
+            },
+            if ram.committed {
+                "saved"
+            } else {
+                "session left uncommitted"
+            }
+        ));
+    } else {
+        final_output.push_str("RAM: persistence disabled.\n");
+    }
     if m.bus.terminal.total_display_bytes > 0 {
         for row in &summary.screen.cells {
             final_output.push_str(String::from_utf8_lossy(row).trim_end());

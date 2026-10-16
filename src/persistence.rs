@@ -7,7 +7,6 @@ use std::path::PathBuf;
 const MAGIC: &[u8; 8] = b"ROCCRAM1";
 const HEADER: usize = 160;
 mod session;
-#[allow(unused_imports)] // Boot attachment consumes these in the next task.
 pub(crate) use session::{FileIdentity, MemorySession, ProtectedPaths};
 #[cfg(test)]
 use session::{SaveStage, FAIL};

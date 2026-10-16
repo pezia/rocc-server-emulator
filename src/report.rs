@@ -64,6 +64,7 @@ impl Serialize for Report<'_> {
         field!("configuration", m.config());
         field!("cold_boot_completed", m.cold_boot_completed());
         field!("front_panel_switches", m.bus.switches);
+        field!("memory_persistence", m.memory_status());
         field!("image_sha256", m.image_sha256);
         field!("initial_overlay_sha256", m.initial_overlay_sha256());
         field!("final_overlay_sha256", overlay_digest(&m.bus.disk.overlay));

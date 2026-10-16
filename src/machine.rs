@@ -1,7 +1,11 @@
+use crate::persistence::{
+    FileIdentity, MemorySession, MemoryStatus, ProtectedPaths, SnapshotIdentity,
+};
 use crate::{cpu::Cpu, devices::Bus, Fault};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::VecDeque;
+use std::{fs::File, path::Path};
 
 pub fn hex(raw: &[u8]) -> String {
     const H: &[u8; 16] = b"0123456789abcdef";
@@ -28,6 +32,8 @@ pub struct Machine {
     pub image_sha256: String,
     pub(crate) recent: VecDeque<(u16, u16, u16)>,
     cold_boot_completed: bool,
+    memory_session: Option<MemorySession>,
+    disabled_memory_status: MemoryStatus,
 }
 impl Machine {
     pub fn new(
@@ -100,6 +106,8 @@ impl Machine {
             image_sha256,
             recent: VecDeque::with_capacity(32),
             cold_boot_completed: false,
+            memory_session: None,
+            disabled_memory_status: MemoryStatus::default(),
         })
     }
     pub fn attach_overlay(
@@ -107,11 +115,15 @@ impl Machine {
         path: &std::path::Path,
         image: &std::fs::File,
     ) -> Result<(), String> {
-        if self.steps != 0 {
+        if self.steps != 0 || self.memory_session.is_some() {
             return Err("overlay must be attached before executing guest instructions".into());
         }
         self.bus.disk.attach_overlay(path, image)?;
         self.initial_overlay_sha256 = crate::report::overlay_digest(&self.bus.disk.overlay);
+        self.reload_bootstrap();
+        Ok(())
+    }
+    fn reload_bootstrap(&mut self) {
         let boot = self
             .bus
             .disk
@@ -124,7 +136,90 @@ impl Machine {
                 .memory
                 .set(n, u16::from_be_bytes([boot[2 * n], boot[2 * n + 1]]));
         }
+    }
+    fn snapshot_identity(&self) -> SnapshotIdentity {
+        SnapshotIdentity {
+            profile: self.config.profile(),
+            address_bits: self.config.address_bits(),
+            image_bytes: self.bus.disk.base.len() as u64,
+            image_sha256: self.image_sha256.clone(),
+            overlay_sha256: crate::report::overlay_digest(&self.bus.disk.overlay),
+        }
+    }
+    /// Attach retained RAM before executing the bootstrap. The disk overlay stays
+    /// locked until this machine is dropped, including snapshot finalization.
+    pub fn attach_memory(
+        &mut self,
+        overlay_path: &Path,
+        image: &File,
+        report_path: Option<&Path>,
+    ) -> Result<(), String> {
+        if self.steps != 0 || self.memory_session.is_some() {
+            return Err("memory must be attached once, before executing guest instructions".into());
+        }
+        let overlay = self.bus.disk.overlay_identity()?;
+        let overlay_path = std::fs::canonicalize(overlay_path).map_err(|e| e.to_string())?;
+        if FileIdentity::from(&std::fs::metadata(&overlay_path).map_err(|e| e.to_string())?)
+            != overlay
+        {
+            return Err("memory path must belong to the attached disk overlay".into());
+        }
+        let mut path = overlay_path.into_os_string();
+        path.push(".ram");
+        let protected = ProtectedPaths {
+            base: FileIdentity::from(&image.metadata().map_err(|e| e.to_string())?),
+            overlay,
+            report: report_path
+                .map(|p| crate::artifact::check_destination(p).map_err(|e| e.to_string()))
+                .transpose()?,
+        };
+        let (mut session, payload) = MemorySession::prepare(
+            Path::new(&path),
+            &protected,
+            &self.cpu.memory,
+            &self.snapshot_identity(),
+            self.config.cold_boot(),
+        )?;
+        if let Some(payload) = payload {
+            self.cpu.memory.restore_snapshot_bytes(&payload)?;
+        }
+        self.cpu
+            .memory
+            .set_mapping(crate::memory::Mapping::SelectedBank(0))
+            .map_err(|e| e.reason().to_owned())?;
+        self.reload_bootstrap();
+        session.begin()?;
+        self.memory_session = Some(session);
         Ok(())
+    }
+    /// Finalize an orderly run; faults leave the durable active-session marker.
+    pub fn finish_memory(&mut self) -> Result<(), String> {
+        if self.memory_session.is_none() || self.memory_status().committed {
+            return Ok(());
+        }
+        if self.fault.is_some()
+            || !matches!(
+                self.reason.as_deref(),
+                None | Some("halt" | "step_limit" | "user_exit" | "input_eof" | "signal")
+            )
+        {
+            return Ok(());
+        }
+        let identity = self.snapshot_identity();
+        self.memory_session
+            .as_mut()
+            .unwrap()
+            .commit(&self.cpu.memory, &identity)?;
+        // Finalization ends execution even when a library caller used a budget
+        // without explicitly setting a stop reason.
+        self.reason.get_or_insert_with(|| "step_limit".into());
+        Ok(())
+    }
+    pub fn memory_status(&self) -> &MemoryStatus {
+        self.memory_session
+            .as_ref()
+            .map(MemorySession::status)
+            .unwrap_or(&self.disabled_memory_status)
     }
     pub fn execute_step(cpu: &mut Cpu, bus: &mut Bus) -> Result<crate::cpu::StepInfo, Fault> {
         cpu.last_instruction = None;

@@ -22,7 +22,6 @@ pub(crate) struct OverlayFile {
 }
 
 impl OverlayFile {
-    #[allow(dead_code)] // Used by the boot attachment task.
     pub(crate) fn identity(&self) -> Result<crate::persistence::FileIdentity, String> {
         self.file
             .metadata()

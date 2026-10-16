@@ -39,7 +39,6 @@ pub struct Disk {
     completion: DiskCompletion,
 }
 impl Disk {
-    #[allow(dead_code)] // Used by the boot attachment task.
     pub(crate) fn overlay_identity(&self) -> Result<crate::persistence::FileIdentity, String> {
         self.journal
             .as_ref()
