@@ -7,6 +7,7 @@ mod overlay;
 mod persistence;
 pub use persistence::MemoryStatus;
 pub mod screen;
+pub mod tape;
 pub mod terminal;
 
 pub mod config;
