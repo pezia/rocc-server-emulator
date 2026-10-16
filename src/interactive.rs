@@ -629,6 +629,8 @@ pub struct InteractiveOutcome {
     pub keys_delivered: u64,
     pub keys_pending: usize,
     pub notices: Vec<String>,
+    pub delivered_keys: std::collections::VecDeque<crate::report::KeyInput>,
+    pub replay_complete: bool,
 }
 /// Run to an absolute guest step limit, or until host exit/guest fault.
 pub fn run(
@@ -651,6 +653,7 @@ pub fn run(
     let end = limit;
     let mut next_poll = machine.steps;
     let mut signal = None;
+    let mut history = crate::report::ReplayHistory::default();
     while machine.reason.is_none() && end.is_none_or(|end| machine.steps < end) {
         if let Some(number) = signals.pending_signal() {
             signal = Some(number);
@@ -737,6 +740,7 @@ pub fn run(
                     .terminal
                     .send_key(key)
                     .map_err(|f| f.reason().to_string())?;
+                history.record(machine.steps, key);
                 k.delivered += 1;
                 k.next_step = machine.steps.saturating_add(2000);
             }
@@ -746,7 +750,10 @@ pub fn run(
     if machine.reason.is_none() {
         machine.reason = Some("step_limit".into());
     }
+    let (delivered_keys, replay_complete) = history.into_parts();
     Ok(InteractiveOutcome {
+        delivered_keys,
+        replay_complete,
         signal,
         keys_delivered: k.delivered,
         keys_pending: k.pending.len(),

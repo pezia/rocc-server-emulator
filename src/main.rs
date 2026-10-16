@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 use std::{
     env,
     fs::{self, File},
-    io::{self, Read, Write},
+    io::{self, Read},
     path::{Path, PathBuf},
     time::Instant,
 };
@@ -252,34 +252,38 @@ fn run() -> Result<i32, String> {
         None
     };
     let elapsed = started.elapsed().as_secs_f64();
-    let mut data = m.report();
-    data["elapsed_seconds"] = json!(elapsed);
-    data["input"] = json!(fs::canonicalize(&image).map_err(|e| e.to_string())?);
-    data["overlay_path"] = json!(overlay_path);
     let signal = interactive_report.as_ref().and_then(|r| r.signal);
-    if let Some(v) = interactive_report {
-        data["interactive"] = json!(v);
-    }
     if let Some(dest) = destination {
-        publish(&dest, &data)?;
+        let metadata = rocc_emulator::report::RunMetadata {
+            input: Some(fs::canonicalize(&image).map_err(|e| e.to_string())?),
+            overlay_path: Some(overlay_path),
+            elapsed_seconds: elapsed,
+            step_budget: steps,
+            batch_keys: keys
+                .into_iter()
+                .map(|(step, byte)| rocc_emulator::report::KeyInput { step, byte })
+                .collect(),
+            interactive: interactive_report,
+        };
+        rocc_emulator::artifact::publish_new(&dest, |file| {
+            rocc_emulator::report::write_report(file, &m, &metadata)
+        })
+        .map_err(|e| e.to_string())?;
         println!("Report: {}", dest.display());
     }
+    let summary = m.summary();
     println!(
         "ROCC Rust: {} at RAM word {} after {} instructions ({elapsed:.3}s)",
-        data["reason"].as_str().unwrap(),
-        m.cpu.pc,
-        m.steps
+        summary.reason, summary.pc, summary.steps
     );
     println!(
         "Disk: {} reads, {} writes to persistent overlay ({} blocks). Original image unchanged.",
-        m.bus.disk.reads,
-        m.bus.disk.writes,
-        m.bus.disk.overlay.len()
+        summary.disk_reads, summary.disk_writes, summary.overlay_blocks
     );
     println!("Overlay: {}", overlay.display());
     if m.bus.terminal.total_display_bytes > 0 {
-        for line in data["display"]["screen"]["lines"].as_array().unwrap() {
-            println!("{}", line.as_str().unwrap());
+        for row in &summary.screen.cells {
+            println!("{}", String::from_utf8_lossy(row).trim_end());
         }
     }
     if m.fault.is_some() {
@@ -291,14 +295,6 @@ fn run() -> Result<i32, String> {
 fn check_destination(path: &Path) -> Result<PathBuf, String> {
     rocc_emulator::artifact::check_destination(path).map_err(|e| e.to_string())
 }
-fn publish(dest: &Path, data: &Value) -> Result<(), String> {
-    rocc_emulator::artifact::publish_new(dest, |file| {
-        serde_json::to_writer_pretty(&mut *file, data).map_err(io::Error::other)?;
-        file.write_all(b"\n")
-    })
-    .map_err(|e| e.to_string())
-}
-
 fn uint(v: &Value, key: &str, max: u64) -> Result<u64, String> {
     v[key]
         .as_u64()

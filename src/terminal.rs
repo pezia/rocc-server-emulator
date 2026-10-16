@@ -468,8 +468,11 @@ impl Terminal {
         }
         json!({"connected":self.connected,"display_byte_count":self.display_bytes.len(),"display_packets":self.packets.len(),"command":self.command(),"pending_events":self.events.len(),"next_event":self.next_event(),"timer_enabled":self.timer_enabled,"timer_period":self.timer_period,"timer_ticks":self.timer_ticks,"present_channels":[0]})
     }
+    pub fn display_export(&self) -> DisplayExport<'_> {
+        DisplayExport(self)
+    }
     pub fn display_report(&self) -> Value {
-        json!({"packets":self.packets,"screen":self.screen.snapshot(),"capture_truncated":self.capture_truncated,"total_bytes":self.total_display_bytes,"connect_after":self.connect_after,"sha256":self.retained_sha256(),"retained_sha256":self.retained_sha256(),"full_stream_sha256":self.full_stream_sha256(),"byte_history_truncated":self.byte_history_truncated,"packet_history_truncated":self.packet_history_truncated})
+        serde_json::to_value(self.display_export()).expect("display report")
     }
 }
 
@@ -589,5 +592,26 @@ mod tests {
         t.io(&m, 0, 1, 0).unwrap();
         assert!(!t.io(&m, 7, 2, 0).unwrap().skip);
         assert!(t.io(&m, 2, 0, 0xe000).is_err());
+    }
+}
+
+pub struct DisplayExport<'a>(&'a Terminal);
+impl serde::Serialize for DisplayExport<'_> {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        let t = self.0;
+        let mut m = s.serialize_map(None)?;
+        m.serialize_entry("packets", &t.packets)?;
+        m.serialize_entry("screen", &t.screen.snapshot())?;
+        m.serialize_entry("capture_truncated", &t.capture_truncated)?;
+        m.serialize_entry("byte_history_truncated", &t.byte_history_truncated)?;
+        m.serialize_entry("packet_history_truncated", &t.packet_history_truncated)?;
+        m.serialize_entry("total_bytes", &t.total_display_bytes)?;
+        m.serialize_entry("connect_after", &t.connect_after)?;
+        m.serialize_entry("sha256", &t.retained_sha256())?;
+        m.serialize_entry("retained_sha256", &t.retained_sha256())?;
+        m.serialize_entry("full_stream_sha256", &t.full_stream_sha256())?;
+        m.serialize_entry("digest_scope",&"sha256 and retained_sha256 cover retained bytes; full_stream_sha256 covers all output bytes")?;
+        m.end()
     }
 }

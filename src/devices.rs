@@ -4,8 +4,8 @@ use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub struct Disk {
-    pub base: Vec<u8>,
-    pub overlay: BTreeMap<usize, Vec<u8>>,
+    pub(crate) base: Vec<u8>,
+    pub(crate) overlay: BTreeMap<usize, Vec<u8>>,
     journal: Option<crate::overlay::OverlayFile>,
     pub a: Option<u16>,
     pub b: Option<u16>,
