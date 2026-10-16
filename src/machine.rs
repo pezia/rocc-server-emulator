@@ -227,6 +227,9 @@ impl Machine {
     pub fn execute_step(cpu: &mut Cpu, bus: &mut Bus) -> Result<crate::cpu::StepInfo, Fault> {
         cpu.last_instruction = None;
         if bus.extended() {
+            if let Some(tape) = &mut bus.tape {
+                tape.tick(&mut cpu.memory)?;
+            }
             bus.terminal.tick()?;
             if bus.delay > 0 {
                 bus.delay -= 1;

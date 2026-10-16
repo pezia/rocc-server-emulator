@@ -1,6 +1,9 @@
 use serde_json::Value;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FaultKind {
+    UnsupportedTapeOperation,
+    TapeMedia,
+    TapeRegisterUninitialized,
     BlockMoveBounds,
     DiskAddressBounds,
     DiskDmaBounds,
@@ -40,6 +43,9 @@ pub enum FaultKind {
 impl FaultKind {
     pub fn reason(self) -> &'static str {
         match self {
+            Self::UnsupportedTapeOperation => "unsupported_tape_operation",
+            Self::TapeMedia => "tape_media_error",
+            Self::TapeRegisterUninitialized => "tape_register_uninitialized",
             Self::BlockMoveBounds => "block_move_bounds",
             Self::DiskAddressBounds => "disk_address_bounds",
             Self::DiskDmaBounds => "disk_dma_bounds",

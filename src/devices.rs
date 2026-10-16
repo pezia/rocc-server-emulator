@@ -245,6 +245,7 @@ pub struct Bus {
     pub switches: u16,
     pub disk: Disk,
     pub terminal: Terminal,
+    pub(crate) tape: Option<crate::tape::TapeController>,
     pub bank_selectors: BTreeSet<u16>,
     selected: u16,
     setup53: usize,
@@ -268,6 +269,7 @@ impl Bus {
             switches: 0,
             disk: Disk::new(raw),
             terminal: Terminal::new(experimental, connect_after),
+            tape: None,
             bank_selectors: BTreeSet::new(),
             selected: 0x80,
             setup53: 0,
@@ -348,6 +350,9 @@ impl Bus {
                 if !self.extended {
                     if (op, p) == (5, 2) {
                         self.disk.reset();
+                        if let Some(tape) = &mut self.tape {
+                            tape.reset();
+                        }
                         r.value = Some(v);
                     } else {
                         return Err(Fault::with(
@@ -379,6 +384,9 @@ impl Bus {
                         self.mask = v;
                     } else if op == 5 {
                         self.disk.reset();
+                        if let Some(tape) = &mut self.tape {
+                            tape.reset();
+                        }
                         self.enabled = false;
                         self.mask = 0;
                         r.value = Some(v);
@@ -425,6 +433,9 @@ impl Bus {
                 }
             }
             0o20 if self.extended => {
+                if let Some(tape) = &mut self.tape {
+                    return tape.io(memory, op, p, v);
+                }
                 if op == 7 {
                     r.skip = [false, true, false, true][p as usize];
                 } else if (op, p) == (2, 1) {

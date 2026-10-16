@@ -1,0 +1,22 @@
+[
+  {
+    "name": "select_unit_zero_ready",
+    "evidence": ["23CD DOA", "C2E1 DIA low bit"],
+    "initial_memory": [],
+    "events": [
+      {"operation": 2, "pulse": 0, "value": 0, "input": null, "skip": false, "busy": false, "done": false, "irq": false},
+      {"operation": 1, "pulse": 0, "value": 0, "input": 2241, "skip": false, "busy": false, "done": false, "irq": false}
+    ],
+    "final_memory": []
+  },
+  {
+    "name": "unconfigured_unit_not_ready",
+    "evidence": ["C2C4..C2D4 unit selection", "C2EA ready test"],
+    "initial_memory": [],
+    "events": [
+      {"operation": 2, "pulse": 0, "value": 1, "input": null, "skip": false, "busy": false, "done": false, "irq": false},
+      {"operation": 1, "pulse": 0, "value": 0, "input": 2112, "skip": false, "busy": false, "done": false, "irq": false}
+    ],
+    "final_memory": []
+  }
+]

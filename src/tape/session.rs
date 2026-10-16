@@ -15,13 +15,13 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub(super) struct TapeProtectedPaths {
+pub(crate) struct TapeProtectedPaths {
     pub image: PathBuf,
     pub overlay: PathBuf,
     pub ram: PathBuf,
     pub report: Option<PathBuf>,
 }
-pub(super) struct TapeSession {
+pub(crate) struct TapeSession {
     file: File,
     path: PathBuf,
     identity: (u64, u64),
