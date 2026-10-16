@@ -17,6 +17,7 @@ pub(crate) struct TapeController {
     flags: u16,
     flags2: u16,
     status: TapeStatus,
+    activity: (u64, &'static str),
 }
 impl TapeController {
     pub(crate) fn new(session: TapeSession) -> Self {
@@ -56,7 +57,12 @@ impl TapeController {
             flags: 0,
             flags2: 0,
             status,
+            activity: (0, "IDLE"),
         }
+    }
+    /// Host activity telemetry survives the bounded polling-event history.
+    pub(crate) fn activity(&self) -> (u64, &'static str) {
+        self.activity
     }
     fn protocol(op: u8, pulse: u8, value: u16) -> Fault {
         Fault::with(
@@ -204,6 +210,23 @@ impl TapeController {
         let result = self.complete(memory);
         self.busy = false;
         self.done = result.is_ok();
+        self.activity = (
+            self.activity.0.wrapping_add(1),
+            if result.is_err() || self.flags & 0x1000 != 0 {
+                "ERROR"
+            } else {
+                match self.command & 0x38 {
+                    0 => "READ",
+                    8 => "REWIND",
+                    0x10 => "SETUP",
+                    0x18 | 0x20 => "SPACE",
+                    0x28 => "WRITE",
+                    0x30 => "MARK",
+                    0x38 => "ERASE",
+                    _ => unreachable!(),
+                }
+            },
+        );
         if let Err(ref e) = result {
             if self.status.error.is_none() {
                 self.status.error = Some(e.reason().into());
