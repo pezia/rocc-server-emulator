@@ -13,9 +13,16 @@ use std::{
 };
 
 fn main() {
-    if let Err(e) = run() {
-        eprintln!("rocc-emulator: {e}");
-        std::process::exit(1);
+    match run() {
+        Ok(code) => {
+            if code != 0 {
+                std::process::exit(code);
+            }
+        }
+        Err(e) => {
+            eprintln!("rocc-emulator: {e}");
+            std::process::exit(1);
+        }
     }
 }
 fn help() {
@@ -39,21 +46,21 @@ Usage: rocc-emulator boot IMAGE [OPTIONS]\n\
 fn number(s: &str, label: &str) -> Result<u64, String> {
     s.parse().map_err(|_| format!("invalid {label}: {s}"))
 }
-fn run() -> Result<(), String> {
+fn run() -> Result<i32, String> {
     let mut args = env::args().skip(1).peekable();
     if matches!(
         args.peek().map(String::as_str),
         None | Some("--help" | "-h")
     ) {
         help();
-        return Ok(());
+        return Ok(0);
     }
     if args.peek().map(String::as_str) == Some("cpu-cases") {
         args.next();
         if args.next().is_some() {
             return Err("cpu-cases takes no arguments".into());
         }
-        return cpu_cases();
+        return cpu_cases().map(|_| 0);
     }
     if args.peek().map(String::as_str) == Some("boot") {
         args.next();
@@ -78,7 +85,7 @@ fn run() -> Result<(), String> {
         }
         if arg == "--help" || arg == "-h" {
             help();
-            return Ok(());
+            return Ok(0);
         }
         if !arg.starts_with('-') {
             if image.replace(PathBuf::from(arg)).is_some() {
@@ -249,8 +256,9 @@ fn run() -> Result<(), String> {
     data["elapsed_seconds"] = json!(elapsed);
     data["input"] = json!(fs::canonicalize(&image).map_err(|e| e.to_string())?);
     data["overlay_path"] = json!(overlay_path);
+    let signal = interactive_report.as_ref().and_then(|r| r.signal);
     if let Some(v) = interactive_report {
-        data["interactive"] = v;
+        data["interactive"] = json!(v);
     }
     if let Some(dest) = destination {
         publish(&dest, &data)?;
@@ -277,7 +285,7 @@ fn run() -> Result<(), String> {
     if m.fault.is_some() {
         return Err(format!("guest stopped: {}", m.reason.unwrap()));
     }
-    Ok(())
+    Ok(signal.map_or(0, |s| 128 + s))
 }
 
 fn check_destination(path: &Path) -> Result<PathBuf, String> {

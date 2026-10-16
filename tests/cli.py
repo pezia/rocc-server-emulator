@@ -251,4 +251,27 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(p.returncode,1);self.assertEqual(termios.tcgetattr(slave),original)
             finally:os.close(master);os.close(slave)
 
+    def test_signals_restore_terminal_and_publish_report(self):
+        for sig in (signal.SIGINT,signal.SIGTERM,signal.SIGHUP):
+            with self.subTest(signal=sig), tempfile.TemporaryDirectory() as tmp:
+                image=Path(tmp)/'disk';image.write_bytes(bytes(6144));report=Path(tmp)/'report'
+                master,slave=pty.openpty();p=None
+                try:
+                    fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,80,0,0))
+                    original=termios.tcgetattr(slave)
+                    p=subprocess.Popen([BINARY,image,'--interactive','--report',report],stdin=slave,stdout=slave,stderr=slave)
+                    out=bytearray();deadline=time.monotonic()+5
+                    while b'Booting guest' not in out and time.monotonic()<deadline:
+                        if select.select([master],[],[],.05)[0]:out.extend(os.read(master,65536))
+                    self.assertIn(b'Booting guest',out)
+                    p.send_signal(sig)
+                    while p.poll() is None and time.monotonic()<deadline:
+                        if select.select([master],[],[],.05)[0]:out.extend(os.read(master,65536))
+                    self.assertEqual(p.poll(),128+sig)
+                    self.assertEqual(termios.tcgetattr(slave),original)
+                    self.assertEqual(json.loads(report.read_text())['interactive']['signal'],sig)
+                finally:
+                    if p is not None and p.poll() is None:p.kill();p.wait()
+                    termios.tcsetattr(slave,termios.TCSANOW,original);os.close(master);os.close(slave)
+
 if __name__=='__main__':unittest.main()

@@ -16,3 +16,5 @@ pub struct IoResult {
     pub value: Option<u16>,
     pub skip: bool,
 }
+
+mod signals;
