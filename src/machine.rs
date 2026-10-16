@@ -17,6 +17,8 @@ pub fn digest(raw: &[u8]) -> String {
 }
 
 pub struct Machine {
+    config: crate::config::MachineConfig,
+    initial_overlay_sha256: String,
     pub cpu: Cpu,
     pub bus: Bus,
     pub steps: u64,
@@ -24,7 +26,7 @@ pub struct Machine {
     pub reason: Option<String>,
     pub fault: Option<Fault>,
     pub image_sha256: String,
-    recent: VecDeque<(u16, u16, u16)>,
+    pub(crate) recent: VecDeque<(u16, u16, u16)>,
 }
 impl Machine {
     pub fn new(
@@ -34,6 +36,35 @@ impl Machine {
         terminal: bool,
         connect: Option<u64>,
     ) -> Result<Self, String> {
+        use crate::config::*;
+        let config = MachineConfig::new(
+            if extended {
+                CpuProfile::Extended
+            } else {
+                CpuProfile::Loader
+            },
+            address_bits,
+            if terminal {
+                TerminalProfile::Experimental
+            } else {
+                TerminalProfile::None
+            },
+            connect,
+            ResourceLimits::default(),
+            CaptureMode::Stop,
+        )?;
+        Self::with_config(raw, config)
+    }
+    pub fn config(&self) -> &crate::config::MachineConfig {
+        &self.config
+    }
+    pub fn with_config(raw: Vec<u8>, config: crate::config::MachineConfig) -> Result<Self, String> {
+        let (extended, address_bits, terminal, connect) = (
+            config.extended(),
+            config.address_bits(),
+            config.experimental(),
+            config.connect_after(),
+        );
         if raw.len() < 6144 || !raw.len().is_multiple_of(256) {
             return Err("boot image must contain at least24 complete256-byte blocks".into());
         }
@@ -44,16 +75,20 @@ impl Machine {
             return Err("invalid address width for profile".into());
         }
         let image_sha256 = digest(&raw);
-        let mut cpu = Cpu::new(address_bits, extended);
+        let mut cpu = Cpu::new(address_bits, extended)?;
         for n in 0..128 {
             cpu.memory
                 .set(n, u16::from_be_bytes([raw[2 * n], raw[2 * n + 1]]));
         }
         cpu.memory.set(10941, 0);
         cpu.pc = 127;
+        let mut bus = Bus::new(raw, extended, terminal, connect);
+        bus.terminal = crate::terminal::Terminal::with_config(&config);
         Ok(Self {
+            initial_overlay_sha256: crate::report::overlay_digest(&bus.disk.overlay),
+            config,
             cpu,
-            bus: Bus::new(raw, extended, terminal, connect),
+            bus,
             steps: 0,
             block_moves: 0,
             reason: None,
@@ -71,6 +106,7 @@ impl Machine {
             return Err("overlay must be attached before executing guest instructions".into());
         }
         self.bus.disk.attach_overlay(path, image)?;
+        self.initial_overlay_sha256 = crate::report::overlay_digest(&self.bus.disk.overlay);
         let boot = self
             .bus
             .disk
@@ -82,6 +118,30 @@ impl Machine {
             self.cpu
                 .memory
                 .set(n, u16::from_be_bytes([boot[2 * n], boot[2 * n + 1]]));
+        }
+        Ok(())
+    }
+    pub fn execute_step(cpu: &mut Cpu, bus: &mut Bus) -> Result<crate::cpu::StepInfo, Fault> {
+        cpu.last_instruction = None;
+        if bus.extended() {
+            bus.terminal.tick()?;
+            if bus.delay > 0 {
+                bus.delay -= 1;
+            } else if bus.enabled && bus.pending().is_some() {
+                let vector = cpu.read(1)?;
+                cpu.memory.write(0, cpu.pc)?;
+                cpu.pc = vector;
+                bus.enabled = false;
+                bus.interrupts += 1;
+            }
+        }
+        cpu.execute(bus)
+    }
+    pub fn send_key(&mut self, byte: u8) -> Result<(), Fault> {
+        if let Err(fault) = self.bus.terminal.send_key(byte) {
+            self.reason = Some(fault.reason().into());
+            self.fault = Some(fault.clone());
+            return Err(fault);
         }
         Ok(())
     }
@@ -104,7 +164,7 @@ impl Machine {
                 let (pc, word) = self.cpu.last_instruction.unwrap_or((self.cpu.pc, 0));
                 self.block_moves +=
                     u64::from(self.cpu.last_instruction.is_some_and(|(_, w)| w == 0x8208));
-                self.reason = Some(f.reason.clone());
+                self.reason = Some(f.reason().to_string());
                 self.fault = Some(f);
                 if self.recent.len() == 32 {
                     self.recent.pop_front();
@@ -115,39 +175,46 @@ impl Machine {
         self.steps += 1;
     }
     pub fn state(&self) -> Value {
-        cpu_state(&self.cpu, self.bus.extended)
+        cpu_state(&self.cpu, self.bus.extended())
+    }
+    pub fn initial_overlay_sha256(&self) -> &str {
+        &self.initial_overlay_sha256
+    }
+    pub fn summary(&self) -> RunSummary<'_> {
+        RunSummary {
+            reason: self.reason.as_deref().unwrap_or("step_limit"),
+            pc: self.cpu.pc,
+            steps: self.steps,
+            disk_reads: self.bus.disk.reads,
+            disk_writes: self.bus.disk.writes,
+            overlay_blocks: self.bus.disk.overlay.len(),
+            screen: &self.bus.terminal.screen,
+        }
     }
     pub fn report(&self) -> Value {
-        let mut memory = Vec::with_capacity(self.cpu.memory.storage.len() * 3);
-        for v in &self.cpu.memory.storage {
-            match v {
-                Some(w) => {
-                    memory.push(1);
-                    memory.extend(w.to_be_bytes());
-                }
-                None => memory.extend([0, 0, 0]),
-            }
-        }
-        json!({"implementation":"rust", "profile":if self.bus.extended {"rocc-startup-v2"} else {"rocc-startup-v1"},
-            "warning":"Experimental inferred hardware; not complete vendor hardware.",
-            "trace_format":"bounded recent-instruction trace",
-            "image_sha256":self.image_sha256,"steps":self.steps,"reason":self.reason.as_deref().unwrap_or("step_limit"),
-            "state":self.state(),"disk_reads":self.bus.disk.reads,"disk_writes":self.bus.disk.writes,
-            "disk_controls":self.bus.disk.controls,"block_moves":self.block_moves,"interrupts":self.bus.interrupts,
-            "bank_selectors":self.bus.bank_selectors,"terminal":self.bus.terminal.snapshot(),
-            "display":self.bus.terminal.display_report(),"memory_sha256":digest(&memory),
-            "overlay":self.bus.overlay_report(&self.image_sha256),
-            "recent_instructions":self.recent.iter().map(|(pc,word,next)|json!({"pc":pc,"word":word,"next_pc":next})).collect::<Vec<_>>(),
-            "fault":self.fault.as_ref().map(|f|&f.details)})
+        serde_json::to_value(crate::report::Report {
+            machine: self,
+            metadata: &crate::report::RunMetadata::default(),
+        })
+        .expect("in-memory report")
     }
+}
+pub struct RunSummary<'a> {
+    pub reason: &'a str,
+    pub pc: u16,
+    pub steps: u64,
+    pub disk_reads: u64,
+    pub disk_writes: u64,
+    pub overlay_blocks: usize,
+    pub screen: &'a crate::screen::Screen,
 }
 pub fn cpu_state(cpu: &Cpu, extended: bool) -> Value {
     let mut v = json!({"pc":cpu.pc,"ac":cpu.ac,"carry":cpu.carry});
     if extended {
-        v["bank"] = if cpu.global_only {
+        v["bank"] = if cpu.memory.global_only() {
             Value::Null
         } else {
-            json!(cpu.memory.bank)
+            json!(cpu.memory.bank())
         };
     }
     v

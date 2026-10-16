@@ -3,7 +3,11 @@ import fcntl,hashlib,json,os,pty,resource,select,signal,struct,subprocess,tempfi
 from pathlib import Path
 
 ROOT=Path(__file__).resolve().parents[1]
-BINARY=ROOT/'target/release/rocc-emulator'
+BINARY=Path(os.environ.get('ROCC_TEST_BINARY',ROOT/'target/release/rocc-emulator')).resolve()
+
+def run(*args,**kwargs):
+    kwargs.setdefault('timeout',15)
+    return subprocess.run(*args,**kwargs)
 
 def writing_image():
     """Boot, replace RAM word 0 with HALT, then write the boot block to disk."""
@@ -15,7 +19,7 @@ def writing_image():
 
 class CliTests(unittest.TestCase):
     def boot(self,image,*args):
-        return subprocess.run([BINARY,'boot',image,'--steps','20',*args],capture_output=True,text=True)
+        return run([BINARY,'boot',image,'--steps','20',*args],capture_output=True,text=True)
 
     def test_default_overlay_persists_and_boots_saved_sector(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -156,7 +160,7 @@ class CliTests(unittest.TestCase):
             def limit_writes():
                 resource.setrlimit(resource.RLIMIT_FSIZE,(100,100))
                 signal.signal(signal.SIGXFSZ,signal.SIG_IGN)
-            p=subprocess.run([BINARY,'boot',image,'--steps','20'],capture_output=True,text=True,preexec_fn=limit_writes)
+            p=run([BINARY,'boot',image,'--steps','20'],capture_output=True,text=True,preexec_fn=limit_writes)
             self.assertNotEqual(p.returncode,0)
             self.assertIn('disk_overlay_write',p.stderr)
             self.assertIn('0 writes',p.stdout)
@@ -177,7 +181,7 @@ class CliTests(unittest.TestCase):
                 deadline=time.monotonic()+5
                 while time.monotonic()<deadline:
                     if overlay.exists() and overlay.stat().st_size>48:break
-                    if p.poll() is not None:self.fail(repr(p.communicate()))
+                    if p.poll() is not None:self.fail(repr(p.communicate(timeout=15)))
                     time.sleep(.005)
                 else:self.fail('guest did not persist its write')
             finally:
@@ -189,35 +193,35 @@ class CliTests(unittest.TestCase):
             self.assertEqual(image.read_bytes(),raw)
 
     def test_explicit_image_required(self):
-        p=subprocess.run([BINARY,'boot'],capture_output=True,text=True)
+        p=run([BINARY,'boot'],capture_output=True,text=True)
         self.assertNotEqual(p.returncode,0)
         self.assertIn('image path is required',p.stderr)
 
     def test_keymap_validation_precedes_terminal_changes(self):
         with tempfile.TemporaryDirectory() as tmp:
             path=Path(tmp)/'keys.json';path.write_text('{"Up":"zz"}')
-            p=subprocess.run([BINARY,'--interactive','--keymap',path],capture_output=True,text=True)
+            p=run([BINARY,'--interactive','--keymap',path],capture_output=True,text=True)
             self.assertNotEqual(p.returncode,0);self.assertIn('invalid byte',p.stderr)
             path.write_text('{"F1":"95"}')
-            p=subprocess.run([BINARY,'--keymap',path],capture_output=True,text=True)
+            p=run([BINARY,'--keymap',path],capture_output=True,text=True)
             self.assertNotEqual(p.returncode,0);self.assertIn('requires --interactive',p.stderr)
 
     def test_rejects_report_symlink_and_bad_checksum(self):
         with tempfile.TemporaryDirectory() as tmp:
             image=Path(tmp)/'disk';image.write_bytes(bytes(6144))
             report=Path(tmp)/'report';report.symlink_to(Path(tmp)/'absent')
-            p=subprocess.run([BINARY,'boot',image,'--steps','1','--report',report],capture_output=True)
+            p=run([BINARY,'boot',image,'--steps','1','--report',report],capture_output=True)
             self.assertNotEqual(p.returncode,0);self.assertTrue(report.is_symlink())
             report.unlink()
-            p=subprocess.run([BINARY,'boot',image,'--steps','1','--expected-sha256','0'*64,'--report',report],capture_output=True)
+            p=run([BINARY,'boot',image,'--steps','1','--expected-sha256','0'*64,'--report',report],capture_output=True)
             self.assertNotEqual(p.returncode,0);self.assertFalse(report.exists())
     def test_invalid_image_and_existing_report_are_preserved(self):
         with tempfile.TemporaryDirectory() as tmp:
             image=Path(tmp)/'disk';image.write_bytes(bytes(6145))
-            p=subprocess.run([BINARY,'boot',image],capture_output=True)
+            p=run([BINARY,'boot',image],capture_output=True)
             self.assertNotEqual(p.returncode,0)
             image.write_bytes(bytes(6144));report=Path(tmp)/'report';report.write_text('keep')
-            p=subprocess.run([BINARY,'boot',image,'--steps','1','--report',report],capture_output=True)
+            p=run([BINARY,'boot',image,'--steps','1','--report',report],capture_output=True)
             self.assertNotEqual(p.returncode,0);self.assertEqual(report.read_text(),'keep')
             self.assertEqual(image.read_bytes(),bytes(6144))
     def test_live_terminal_exit_restores_exact_modes(self):
@@ -236,7 +240,7 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(termios.tcgetattr(slave),original)
                 self.assertEqual(json.loads(report.read_text())['reason'],'user_exit')
             finally:
-                if p is not None and p.poll() is None:p.kill();p.wait()
+                if p is not None and p.poll() is None:p.kill();p.wait(timeout=5)
                 os.close(master);os.close(slave)
 
     def test_guest_fault_restores_terminal(self):
@@ -250,5 +254,134 @@ class CliTests(unittest.TestCase):
                 p.wait(timeout=10)
                 self.assertEqual(p.returncode,1);self.assertEqual(termios.tcgetattr(slave),original)
             finally:os.close(master);os.close(slave)
+
+    def test_signals_restore_terminal_and_publish_report(self):
+        for sig in (signal.SIGINT,signal.SIGTERM,signal.SIGHUP):
+            with self.subTest(signal=sig), tempfile.TemporaryDirectory() as tmp:
+                image=Path(tmp)/'disk';image.write_bytes(bytes(6144));report=Path(tmp)/'report'
+                master,slave=pty.openpty();p=None
+                try:
+                    fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,80,0,0))
+                    original=termios.tcgetattr(slave)
+                    p=subprocess.Popen([BINARY,image,'--interactive','--report',report],stdin=slave,stdout=slave,stderr=slave)
+                    out=bytearray();deadline=time.monotonic()+5
+                    while b'Booting guest' not in out and time.monotonic()<deadline:
+                        if select.select([master],[],[],.05)[0]:out.extend(os.read(master,65536))
+                    self.assertIn(b'Booting guest',out)
+                    p.send_signal(sig)
+                    while p.poll() is None and time.monotonic()<deadline:
+                        if select.select([master],[],[],.05)[0]:out.extend(os.read(master,65536))
+                    self.assertEqual(p.poll(),128+sig)
+                    self.assertEqual(termios.tcgetattr(slave),original)
+                    self.assertEqual(json.loads(report.read_text())['interactive']['signal'],sig)
+                finally:
+                    if p is not None and p.poll() is None:p.kill();p.wait(timeout=5)
+                    termios.tcsetattr(slave,termios.TCSANOW,original);os.close(master);os.close(slave)
+
+    def test_report_permissions_ignore_permissive_umask(self):
+        for mask in (0,0o022):
+            with self.subTest(umask=mask),tempfile.TemporaryDirectory() as tmp:
+                image=Path(tmp)/'disk';image.write_bytes(bytes(6144));report=Path(tmp)/'report'
+                p=run([BINARY,image,'--steps','1','--report',report],capture_output=True,umask=mask,timeout=15)
+                self.assertEqual(p.returncode,0,p.stderr)
+                self.assertEqual(report.stat().st_mode&0o777,0o600)
+
+    def test_compaction_preserves_source_and_boot_state(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            image=Path(tmp)/'disk';image.write_bytes(writing_image());p=self.boot(image);self.assertEqual(p.returncode,0,p.stderr)
+            source=Path(str(image)+'.overlay');saved=source.read_bytes();source.write_bytes(saved+saved[48:]*3+b'partial')
+            before=source.read_bytes();dest=Path(tmp)/'compact'
+            p=run([BINARY,'compact-overlay',image,'--overlay',source,'--output',dest],capture_output=True,text=True,timeout=15)
+            self.assertEqual(p.returncode,0,p.stderr);self.assertEqual(source.read_bytes(),before);self.assertEqual(image.read_bytes(),writing_image())
+            self.assertEqual(dest.stat().st_size,48+296);self.assertEqual(dest.stat().st_mode&0o777,0o600)
+            report=Path(tmp)/'report';p=self.boot(image,'--overlay',dest,'--report',report);self.assertEqual(p.returncode,0,p.stderr);self.assertEqual(json.loads(report.read_text())['steps'],2)
+
+    def test_compaction_honors_lock_and_rejects_aliases(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            image=Path(tmp)/'disk';image.write_bytes(writing_image());self.assertEqual(self.boot(image).returncode,0)
+            source=Path(str(image)+'.overlay');before=source.read_bytes();dest=Path(tmp)/'new'
+            with source.open('rb') as f:
+                fcntl.flock(f,fcntl.LOCK_EX|fcntl.LOCK_NB)
+                p=run([BINARY,'compact-overlay',image,'--overlay',source,'--output',dest],capture_output=True,timeout=15)
+                self.assertNotEqual(p.returncode,0);self.assertFalse(dest.exists())
+            for out in (source,image):
+                p=run([BINARY,'compact-overlay',image,'--overlay',source,'--output',out],capture_output=True,timeout=15)
+                self.assertNotEqual(p.returncode,0)
+            self.assertEqual(source.read_bytes(),before);self.assertEqual(image.read_bytes(),writing_image())
+
+    def test_compaction_rejects_corrupt_source_without_output(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            image=Path(tmp)/'disk';image.write_bytes(writing_image());self.assertEqual(self.boot(image).returncode,0)
+            source=Path(str(image)+'.overlay');raw=bytearray(source.read_bytes());raw[-1]^=1;source.write_bytes(raw);dest=Path(tmp)/'new'
+            p=run([BINARY,'compact-overlay',image,'--overlay',source,'--output',dest],capture_output=True,timeout=15)
+            self.assertNotEqual(p.returncode,0);self.assertFalse(dest.exists());self.assertEqual(source.read_bytes(),raw)
+
+    def test_scheduled_key_queue_fault_still_publishes_report(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            image=Path(tmp)/'disk';raw=bytearray(6144);raw[254:256]=(127).to_bytes(2,'big');image.write_bytes(raw);report=Path(tmp)/'report'
+            p=run([BINARY,image,'--profile','extended','--terminal','experimental','--steps','3','--connect-after','1','--event-limit','1','--key-at','1:41','--report',report],capture_output=True,text=True)
+            self.assertNotEqual(p.returncode,0);self.assertTrue(report.exists(),p.stderr)
+            data=json.loads(report.read_text());self.assertEqual(data['reason'],'terminal_event_limit');self.assertEqual(data['steps'],1)
+
+    def test_signal_with_full_output_queue_exits_without_summary_block(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            image=Path(tmp)/'disk';image.write_bytes(bytes(6144));report=Path(tmp)/'report'
+            master,slave=pty.openpty();p=None;original=termios.tcgetattr(slave)
+            try:
+                fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',25,65535,0,0))
+                p=subprocess.Popen([BINARY,image,'--interactive','--report',report],stdin=slave,stdout=slave,stderr=slave)
+                deadline=time.monotonic()+5
+                while termios.tcgetattr(slave)==original and p.poll() is None and time.monotonic()<deadline:time.sleep(.01)
+                self.assertNotEqual(termios.tcgetattr(slave),original)
+                time.sleep(.1);p.send_signal(signal.SIGTERM)
+                self.assertEqual(p.wait(timeout=3),143)
+                self.assertEqual(termios.tcgetattr(slave),original);self.assertTrue(report.exists())
+            finally:
+                if p is not None and p.poll() is None:p.kill();p.wait(timeout=5)
+                termios.tcsetattr(slave,termios.TCSANOW,original);os.close(master);os.close(slave)
+
+    def test_interactive_key_queue_fault_retains_outcome_and_report(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            image=Path(tmp)/'disk';raw=bytearray(6144)
+            for address,word in {127:0,0:0x2064,1:0x6228,2:0x6428,3:0x2065,4:0x6628,5:5,100:0,101:65}.items():raw[2*address:2*address+2]=word.to_bytes(2,'big')
+            image.write_bytes(raw);report=Path(tmp)/'report';master,slave=pty.openpty();p=None;original=termios.tcgetattr(slave)
+            try:
+                fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,80,0,0))
+                p=subprocess.Popen([BINARY,image,'--interactive','--connect-after','1','--event-limit','2','--report',report],stdin=slave,stdout=slave,stderr=slave)
+                out=bytearray();deadline=time.monotonic()+5
+                while b'\x1b[1;1HA' not in out and p.poll() is None and time.monotonic()<deadline:
+                    if select.select([master],[],[],.05)[0]:out.extend(os.read(master,65536))
+                self.assertIn(b'\x1b[1;1HA',out);os.write(master,b'B')
+                while p.poll() is None and time.monotonic()<deadline:
+                    if select.select([master],[],[],.05)[0]:out.extend(os.read(master,65536))
+                self.assertEqual(p.poll(),1,repr(out[-500:]));data=json.loads(report.read_text())
+                self.assertEqual(data['reason'],'terminal_event_limit');self.assertEqual(data['interactive']['keys_pending'],1)
+                self.assertEqual(data['interactive']['keys_delivered'],0);self.assertEqual(data['interactive']['delivered_keys'],[])
+                self.assertEqual(termios.tcgetattr(slave),original)
+            finally:
+                if p is not None and p.poll() is None:p.kill();p.wait(timeout=5)
+                termios.tcsetattr(slave,termios.TCSANOW,original);os.close(master);os.close(slave)
+
+    def test_invalid_limits_leave_runtime_artifacts_absent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            image=Path(tmp)/'disk';image.write_bytes(bytes(6144));report=Path(tmp)/'report'
+            for option,value in [('--event-limit','0'),('--event-limit','65537'),('--capture-bytes','67108865'),('--packet-limit','65537')]:
+                p=run([BINARY,image,option,value,'--report',report],capture_output=True,text=True)
+                self.assertNotEqual(p.returncode,0);self.assertIn('invalid resource limits',p.stderr)
+                self.assertFalse(report.exists());self.assertFalse(Path(str(image)+'.overlay').exists())
+
+    def test_compaction_wrong_base_and_failed_publication_preserve_sources(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            image=Path(tmp)/'disk';original=writing_image();image.write_bytes(original);self.assertEqual(self.boot(image).returncode,0)
+            source=Path(str(image)+'.overlay');before=source.read_bytes();dest=Path(tmp)/'new'
+            changed=bytearray(original);changed[-1]^=1;image.write_bytes(changed)
+            p=run([BINARY,'compact-overlay',image,'--overlay',source,'--output',dest],capture_output=True)
+            self.assertNotEqual(p.returncode,0);self.assertFalse(dest.exists());self.assertEqual(source.read_bytes(),before);self.assertEqual(image.read_bytes(),changed)
+            image.write_bytes(original)
+            def limit_writes():
+                resource.setrlimit(resource.RLIMIT_FSIZE,(100,100));signal.signal(signal.SIGXFSZ,signal.SIG_IGN)
+            p=run([BINARY,'compact-overlay',image,'--overlay',source,'--output',dest],capture_output=True,preexec_fn=limit_writes)
+            self.assertNotEqual(p.returncode,0);self.assertFalse(dest.exists());self.assertEqual(source.read_bytes(),before);self.assertEqual(image.read_bytes(),original)
+            self.assertFalse(list(Path(tmp).glob('.rocc-artifact-*')))
 
 if __name__=='__main__':unittest.main()

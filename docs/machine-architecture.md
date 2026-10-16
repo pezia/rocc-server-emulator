@@ -207,8 +207,8 @@ On reopening, incomplete final records are discarded after all complete records
 have been validated. Invalid headers, base-image mismatches, invalid offsets,
 and complete records with bad checksums are rejected without rewriting the
 overlay. An incomplete header is rejected rather than reset. The journal grows
-by one record per write, including repeated writes to the same block; there is
-no compaction or merge-to-base operation. Preserve both the original image and
+by one record per write, including repeated writes to the same block; compaction is available through `compact-overlay IMAGE --overlay SOURCE
+--output NEWPATH`; there is no merge-to-base operation. Preserve both the original image and
 its overlay when backing up a session. To start again from the original state,
 choose a fresh overlay path. Overlay files and JSON reports can contain guest
 data and are private runtime artifacts.
@@ -279,7 +279,19 @@ Display DMA [RECOVERED, narrowly implemented]:
 ```
 
 In interactive mode the controller retains a bounded capture tail instead of
-stopping at the batch capture limit; screen state continues updating.
+stopping at the batch capture limit; screen state continues updating. Both modes
+bound bytes and packet count independently: defaults are 1 MiB and 4096 packets.
+`--capture-bytes` accepts 1..67108864 and `--packet-limit` accepts 1..65536.
+Total/retained packet and retained-byte counts are exported explicitly.
+Byte history uses a ring buffer; packets are compact typed records serialized only
+on export. Separate truncation flags identify which history was evicted.
+
+All events share a checked queue (default 4096; `--event-limit` accepts 1..65536).
+A command reserves completion capacity before memory reads or effects. A full
+queue stops with `terminal_event_limit`; a full batch byte/packet history stops
+with `terminal_capture_limit`. Connection/timer events due on the same tick reserve
+capacity together. Timer coalescing tracks the pending event directly; popping it
+through any clear operation permits the next tick event.
 
 Immediate character output, recovered during interactive work:
 
@@ -408,7 +420,8 @@ and the private overlay are emulator policies, not physical exception mechanisms
 - [Device bus and controllers](../src/devices.rs)
 - [Terminal controller](../src/terminal.rs) and [screen model](../src/screen.rs)
 - [Interactive host terminal](../src/interactive.rs)
-- [Machine initialization and reports](../src/machine.rs)
+- [Machine initialization and execution clock](../src/machine.rs)
+- [Streaming reports](../src/report.rs) and [private publication](../src/artifact.rs)
 - [Build, run, and test instructions](../README.md)
 
 The public tests use synthetic CPU cases and temporary synthetic disk images.
@@ -416,3 +429,64 @@ They exercise memory banking, DMA boundaries and failure atomicity, interrupt
 ordering, terminal events, input parsing, display controls, and host-terminal
 restoration. Passing them verifies implementation consistency, not complete
 physical-machine fidelity.
+
+
+## 11. Rust API boundaries
+
+`MachineConfig::new` validates profile, address width, connection time and
+`ResourceLimits` before machine allocation. Configuration fields and memory
+geometry/storage/mapping are private. `Machine::with_config` consumes validated
+settings; `Machine::new` remains a validated compatibility constructor.
+`Cpu::new(address_bits, extended)` now returns a Result.
+
+Memory's public `read`, `write`, `peek`, `physical`, `validate_range`, and
+`initialize_physical` methods return typed faults for invalid addresses, banks,
+unknown data, or global-only access. `iter_physical` exposes a read-only iterator.
+Replace field mutation with `set_mapping(Mapping::SelectedBank(bank))` or
+`Mapping::GlobalOnly`; geometry has immutable getters. Logical ranges use checked
+addition and accept an empty range at the address-space endpoint.
+
+Controllers accept `&mut Memory` rather than `&mut Cpu`. `Cpu::execute` implements
+instructions only. `Machine::execute_step` owns terminal ticking, deferred IRQ
+enable, interrupt entry, and instruction execution; both normal execution and CPU
+fixtures use it. `Cpu::step` remains a forwarding compatibility method. A faulting
+step still advances the instruction clock once; resource faults before fetch do
+not execute an instruction. Disk completion and terminal readiness are typed
+states; faults have a closed `FaultKind` and typed `FaultContext` variants with
+stable external reason strings. `Fault::with` accepts a typed context rather than
+arbitrary JSON; optional command values preserve explicit null diagnostics.
+Library callers entering `interactive::run` must select Tail capture in validated
+configuration. Incompatible capture policies are rejected before changing the
+host terminal; the runtime cannot silently change the reported capture policy.
+
+`Machine::summary` borrows the final screen and lightweight counters, with no
+memory hashing or disk encoding. `write_report` streams borrowed report sections;
+`Machine::report` is an explicit in-memory convenience API. Disk base/changed
+blocks are encapsulated; controller writes are the path for changing disk state.
+
+## 12. Report schema and host lifecycle
+
+Schema 2 preserves legacy fields and adds effective configuration, package/build
+identity, absolute instruction budget and scheduled keys. Interactive metadata
+includes delivered `{step, byte}` keys, capped at 65536, and `replay_complete`.
+The build revision is a Git revision with `-dirty` when detected, or `unavailable`
+when built outside Git. The original base-image SHA-256 excludes overlay data.
+
+Initial/final overlay state digests hash `ROCC-OVERLAY-STATE-1` followed by ascending
+records encoded as an unsigned 64-bit big-endian offset and 256 raw block bytes.
+Initial state is captured after attachment, before guest execution. Display
+`sha256` and `retained_sha256` hash retained raw bytes; `full_stream_sha256` hashes
+all successful output incrementally. Truncation flags distinguish byte/packet
+retention. These records support comparison and input replay; they are not full
+machine checkpoints and do not establish physical-machine correctness.
+
+Private report/compacted-overlay files are created with mode 0600, synced before
+no-overwrite publication, and followed by parent-directory synchronization.
+Finalization failures after publication explicitly report that a complete file
+was already published. Existing destinations and base images remain intact.
+
+Interactive SIGINT, SIGTERM, and SIGHUP handlers only set a shutdown flag. The
+normal loop restores termios, previous handlers, and host display state, then
+exports a requested report and returns 128 + signal number. Keyboard Ctrl-C and
+Ctrl-] retain user_exit. SIGKILL cannot be handled. Output waits are bounded so
+an unresponsive host terminal cannot indefinitely prevent cleanup.

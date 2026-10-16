@@ -20,12 +20,16 @@ def cpu(binary):
     check(REFERENCE_SHA256, hashlib.sha256(raw).hexdigest(), 'fixture SHA256')
     cases = json.loads(raw)['cases']
     result = subprocess.run([str(binary), 'cpu-cases'], input=json.dumps([c['input'] for c in cases]),
-                            text=True, capture_output=True, check=True)
+                            text=True, capture_output=True, check=True, timeout=120)
     actual = json.loads(result.stdout)
     check(len(cases), len(actual), 'case count')
     for n, (case, result) in enumerate(zip(cases, actual)):
         check(case['expected'], result, f'CPU case {n}')
-    return {'cpu_cases': len(cases)}
+    new_cases=json.loads((ROOT/'tests/generated-reference.json').read_text())['cases']
+    generated=subprocess.run([str(binary),'cpu-cases'],input=json.dumps([c['input'] for c in new_cases]),text=True,capture_output=True,check=True,timeout=120)
+    outputs=json.loads(generated.stdout);check(len(new_cases),len(outputs),'independent case count')
+    for n,(c,out) in enumerate(zip(new_cases,outputs)):check(c['expected'],out,f'independent CPU case {n}')
+    return {'cpu_cases': len(cases),'independent_cpu_cases':len(new_cases)}
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)

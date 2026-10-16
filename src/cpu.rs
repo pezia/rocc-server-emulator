@@ -1,12 +1,10 @@
 use crate::{devices::Bus, memory::Memory, Fault};
-use serde_json::json;
 #[derive(Debug)]
 pub struct Cpu {
     pub memory: Memory,
     pub ac: [u16; 4],
     pub carry: u16,
     pub pc: u16,
-    pub global_only: bool,
     /// Last fetched instruction, including one that faults after interrupt entry.
     pub last_instruction: Option<(u16, u16)>,
 }
@@ -18,41 +16,38 @@ pub struct StepInfo {
     pub halt: bool,
 }
 impl Cpu {
-    pub fn new(address_bits: u8, extended: bool) -> Self {
-        Self {
-            memory: Memory::new(address_bits, extended),
+    pub fn new(address_bits: u8, extended: bool) -> Result<Self, String> {
+        use crate::config::*;
+        let config = MachineConfig::new(
+            if extended {
+                CpuProfile::Extended
+            } else {
+                CpuProfile::Loader
+            },
+            address_bits,
+            TerminalProfile::None,
+            None,
+            ResourceLimits::default(),
+            CaptureMode::Stop,
+        )?;
+        Ok(Self {
+            memory: Memory::new(&config),
             ac: [0; 4],
             carry: 0,
             pc: 0,
-            global_only: false,
             last_instruction: None,
-        }
-    }
-    fn guard(&self, address: usize) -> Result<(), Fault> {
-        if self.global_only && address >= self.memory.global_words {
-            return Err(Fault::with(
-                "unmapped_memory_bank",
-                json!({"address":address,"selector":65535}),
-            ));
-        }
-        Ok(())
-    }
-    pub fn read(&self, address: usize) -> Result<u16, Fault> {
-        self.guard(address)?;
-        self.memory.get(address).ok_or_else(|| {
-            let mut details = json!({"address":address});
-            if self.memory.bank_words != 0 {
-                details["mapping"] = json!({"region":if address >= self.memory.global_words {"local"} else {"global"},
-                    "bank":if address >= self.memory.global_words {Some(self.memory.bank)} else {None},
-                    "physical_word":self.memory.physical(address)});
-            }
-            Fault::with("uninitialized_memory",details)
         })
     }
+    fn guard(&self, address: usize) -> Result<(), Fault> {
+        self.memory
+            .physical(address, self.memory.mapping())
+            .map(|_| ())
+    }
+    pub fn read(&self, address: usize) -> Result<u16, Fault> {
+        self.memory.read(address)
+    }
     pub fn write(&mut self, address: usize, value: u16) -> Result<(), Fault> {
-        self.guard(address)?;
-        self.memory.set(address, value);
-        Ok(())
+        self.memory.write(address, value)
     }
     fn effective_address(&mut self, word: u16) -> Result<u16, Fault> {
         let mode = (word >> 8) & 3;
@@ -67,7 +62,7 @@ impl Cpu {
         } else {
             (word as u8 as i8 as i16) as u16
         };
-        let mut address = base.wrapping_add(displacement) & self.memory.mask;
+        let mut address = base.wrapping_add(displacement) & self.memory.mask();
         if word & 0x400 != 0 {
             for _ in 0..256 {
                 let pointer = self.read(address as usize)?;
@@ -82,14 +77,17 @@ impl Cpu {
                 } else {
                     pointer
                 };
-                address = target & self.memory.mask;
-                if self.memory.mask == 65535 || pointer & 0x8000 == 0 {
+                address = target & self.memory.mask();
+                if self.memory.mask() == 65535 || pointer & 0x8000 == 0 {
                     return Ok(address);
                 }
             }
             return Err(Fault::with(
-                "indirect_limit",
-                json!({"address":address,"limit":256}),
+                crate::FaultKind::IndirectLimit,
+                crate::FaultContext::Indirect {
+                    address: address as usize,
+                    limit: 256,
+                },
             ));
         }
         Ok(address)
@@ -98,28 +96,32 @@ impl Cpu {
         let destination = self.ac[0] as usize;
         let source = self.ac[1] as usize;
         let count = self.ac[3] as usize;
-        if destination + count > self.memory.logical_words
-            || source + count > self.memory.logical_words
+        if destination + count > self.memory.logical_words()
+            || source + count > self.memory.logical_words()
         {
             return Err(Fault::with(
-                "block_move_bounds",
-                json!({"source":source,"destination":destination,"words":count}),
+                crate::FaultKind::BlockMoveBounds,
+                crate::FaultContext::BlockMove {
+                    source,
+                    destination,
+                    words: count,
+                },
             ));
         }
         if extended && count > 0 {
             self.guard(destination + count - 1)?;
         }
-        let mut bank = self.memory.bank;
+        let mut bank = self.memory.bank();
         if extended
             && count > 0
-            && self.memory.bank_words > 0
-            && source + count > self.memory.global_words
+            && self.memory.bank_words() > 0
+            && source + count > self.memory.global_words()
         {
             bank = (self.read(2)? >> 8) as usize;
-            if bank >= self.memory.banks {
+            if bank >= self.memory.banks() {
                 return Err(Fault::with(
-                    "unsupported_move_source_bank",
-                    json!({"bank":bank}),
+                    crate::FaultKind::UnsupportedMoveSourceBank,
+                    crate::FaultContext::Bank { bank },
                 ));
             }
         }
@@ -127,25 +129,33 @@ impl Cpu {
         for n in 0..count {
             let address = source + n;
             let physical = address
-                + if address >= self.memory.global_words {
-                    bank * self.memory.bank_words
+                + if address >= self.memory.global_words() {
+                    bank * self.memory.bank_words()
                 } else {
                     0
                 };
             let value = match pending.get(&physical) {
                 Some(v) => *v,
                 None if !extended => self.read(address)?,
-                None => self.memory.storage[physical].ok_or_else(|| {
+                None => self.memory.physical_get(physical).ok_or_else(|| {
                     Fault::with(
-                        "uninitialized_memory",
-                        json!({"address":address,"bank":bank,"physical_word":physical}),
+                        crate::FaultKind::UninitializedMemory,
+                        crate::FaultContext::CopySource {
+                            address,
+                            bank,
+                            physical_word: physical,
+                        },
                     )
                 })?,
             };
-            pending.insert(self.memory.physical(destination + n), value);
+            pending.insert(
+                self.memory
+                    .physical(destination + n, self.memory.mapping())?,
+                value,
+            );
         }
         for (physical, value) in pending {
-            self.memory.storage[physical] = Some(value);
+            self.memory.physical_set(physical, value)?;
         }
         if extended {
             self.ac[0] = self.ac[0].wrapping_add(count as u16);
@@ -155,12 +165,12 @@ impl Cpu {
         Ok(())
     }
     fn byte_field(&mut self, word: u16) -> Result<(), Fault> {
-        let low = self.read((self.ac[2].wrapping_sub(68) & self.memory.mask) as usize)?;
-        let high = self.read((self.ac[2].wrapping_sub(67) & self.memory.mask) as usize)?;
+        let low = self.read((self.ac[2].wrapping_sub(68) & self.memory.mask()) as usize)?;
+        let high = self.read((self.ac[2].wrapping_sub(67) & self.memory.mask()) as usize)?;
         if high & !1 != 0 {
             return Err(Fault::with(
-                "unsupported_byte_descriptor",
-                json!({"low":low,"high":high}),
+                crate::FaultKind::UnsupportedByteDescriptor,
+                crate::FaultContext::Descriptor { low, high },
             ));
         }
         let pointer = low as usize | ((high as usize) << 16);
@@ -178,19 +188,10 @@ impl Cpu {
         Ok(())
     }
     pub fn step(&mut self, bus: &mut Bus) -> Result<StepInfo, Fault> {
+        crate::machine::Machine::execute_step(self, bus)
+    }
+    pub fn execute(&mut self, bus: &mut Bus) -> Result<StepInfo, Fault> {
         self.last_instruction = None;
-        if bus.extended {
-            bus.terminal.tick();
-            if bus.delay > 0 {
-                bus.delay -= 1;
-            } else if bus.enabled && bus.pending().is_some() {
-                let vector = self.read(1)?;
-                self.memory.set(0, self.pc);
-                self.pc = vector;
-                bus.enabled = false;
-                bus.interrupts += 1;
-            }
-        }
         let pc = self.pc;
         let word = self.read(pc as usize)?;
         self.last_instruction = Some((pc, word));
@@ -200,15 +201,15 @@ impl Cpu {
             block_move: false,
             halt: false,
         };
-        let mut next_pc = pc.wrapping_add(1) & self.memory.mask;
+        let mut next_pc = pc.wrapping_add(1) & self.memory.mask();
         if word == 0x8208 {
             info.block_move = true;
-            self.block_move(bus.extended)?;
-        } else if bus.extended && matches!(word, 0xabc9 | 0xbbc9 | 0xfbc9) {
+            self.block_move(bus.extended())?;
+        } else if bus.extended() && matches!(word, 0xabc9 | 0xbbc9 | 0xfbc9) {
             self.byte_field(word)?;
         } else if word & 0x8000 != 0 {
-            if bus.extended && word & 15 == 8 {
-                return Err(Fault::new("unsupported_rocc_instruction"));
+            if bus.extended() && word & 15 == 8 {
+                return Err(Fault::new(crate::FaultKind::UnsupportedRoccInstruction));
             }
             let source = ((word >> 13) & 3) as usize;
             let dest = ((word >> 11) & 3) as usize;
@@ -250,7 +251,7 @@ impl Cpu {
                 _ => carry == 1 && result != 0,
             };
             if skip {
-                next_pc = next_pc.wrapping_add(1) & self.memory.mask;
+                next_pc = next_pc.wrapping_add(1) & self.memory.mask();
             }
             if word & 8 == 0 {
                 self.ac[dest] = result;
@@ -275,7 +276,7 @@ impl Cpu {
                     };
                     self.write(address as usize, value)?;
                     if value == 0 {
-                        next_pc = next_pc.wrapping_add(1) & self.memory.mask;
+                        next_pc = next_pc.wrapping_add(1) & self.memory.mask();
                     }
                 }
                 4..=7 => self.ac[(op & 3) as usize] = self.read(address as usize)?,
@@ -288,19 +289,22 @@ impl Cpu {
             let operation = ((word >> 8) & 7) as u8;
             let number = (word & 63) as u8;
             let result = bus.io(
-                self,
+                &mut self.memory,
                 number,
                 operation,
                 ((word >> 6) & 3) as u8,
                 self.ac[accumulator],
             )?;
             if matches!(operation, 1 | 3 | 5) {
-                self.ac[accumulator] = result
-                    .value
-                    .ok_or_else(|| Fault::with("missing_device_input", json!({"device":number})))?;
+                self.ac[accumulator] = result.value.ok_or_else(|| {
+                    Fault::with(
+                        crate::FaultKind::MissingDeviceInput,
+                        crate::FaultContext::Device { device: number },
+                    )
+                })?;
             }
             if result.skip {
-                next_pc = next_pc.wrapping_add(1) & self.memory.mask;
+                next_pc = next_pc.wrapping_add(1) & self.memory.mask();
             }
         }
         self.pc = next_pc;
@@ -311,7 +315,7 @@ impl Cpu {
 mod tests {
     use super::*;
     fn setup(extended: bool, word: u16) -> (Cpu, Bus) {
-        let mut c = Cpu::new(16, extended);
+        let mut c = Cpu::new(16, extended).unwrap();
         c.pc = 100;
         c.memory.set(100, word);
         (c, Bus::new(vec![0; 6144], extended, false, None))
@@ -328,7 +332,7 @@ mod tests {
     }
     #[test]
     fn indirect_autoincrement_uses_original_high_bit() {
-        let mut c = Cpu::new(15, false);
+        let mut c = Cpu::new(15, false).unwrap();
         let mut b = Bus::new(vec![0; 6144], false, false, None);
         c.memory.set(0, 0x2410);
         c.memory.set(16, 0xffff);
@@ -364,14 +368,18 @@ mod tests {
         let (mut c, mut b) = setup(true, 0x8208);
         c.ac = [200, 300, 0, 2];
         c.memory.set(300, 7);
-        assert_eq!(c.step(&mut b).unwrap_err().reason, "uninitialized_memory");
+        assert_eq!(c.step(&mut b).unwrap_err().reason(), "uninitialized_memory");
         assert_eq!(c.memory.get(200), None);
         assert_eq!(c.pc, 100);
         c.ac = [0xf000, 0xf000, 0, 1];
         c.memory.set(2, 0x100);
-        c.memory.bank = 1;
+        c.memory
+            .set_mapping(crate::memory::Mapping::SelectedBank(1))
+            .unwrap();
         c.memory.set(0xf000, 77);
-        c.memory.bank = 0;
+        c.memory
+            .set_mapping(crate::memory::Mapping::SelectedBank(0))
+            .unwrap();
         c.step(&mut b).unwrap();
         assert_eq!(c.memory.get(0xf000), Some(77));
     }
@@ -389,11 +397,13 @@ mod tests {
         c.ac[1] = 0x12;
         c.step(&mut b).unwrap();
         assert_eq!(c.memory.get(300), Some(0xab12));
-        c.global_only = true;
-        assert_eq!(c.read(0xf000).unwrap_err().reason, "unmapped_memory_bank");
+        c.memory
+            .set_mapping(crate::memory::Mapping::GlobalOnly)
+            .unwrap();
+        assert_eq!(c.read(0xf000).unwrap_err().reason(), "unmapped_memory_bank");
         c.memory.set(102, 0x8008);
         assert_eq!(
-            c.step(&mut b).unwrap_err().reason,
+            c.step(&mut b).unwrap_err().reason(),
             "unsupported_rocc_instruction"
         );
     }
@@ -402,7 +412,7 @@ mod tests {
         let (mut c, mut b) = setup(true, 0x8200);
         c.memory.set(1, 200);
         c.memory.set(200, 0x663f);
-        b.terminal.events.push_back([1, 2, 3]);
+        b.terminal.connect().unwrap();
         b.enabled = true;
         b.delay = 1;
         c.step(&mut b).unwrap();

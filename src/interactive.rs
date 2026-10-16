@@ -157,9 +157,9 @@ mod tests {
 }
 
 use crate::machine::Machine;
-use serde_json::{json, Value};
+
 use std::collections::{BTreeMap, VecDeque};
-use std::io::{self, Write};
+use std::io;
 use std::time::{Duration, Instant};
 
 /// Host names are deliberately separate from unverified physical key labels.
@@ -413,6 +413,7 @@ impl Keyboard {
 
 struct RawSession {
     original: libc::termios,
+    output_flags: i32,
 }
 impl RawSession {
     fn enter() -> Result<Self, String> {
@@ -431,7 +432,16 @@ impl RawSession {
             if libc::tcsetattr(0, libc::TCSANOW, &raw) != 0 {
                 return Err(io::Error::last_os_error().to_string());
             }
-            let session = Self { original };
+            let output_flags = libc::fcntl(1, libc::F_GETFL);
+            let session = Self {
+                original,
+                output_flags,
+            };
+            if output_flags < 0
+                || libc::fcntl(1, libc::F_SETFL, output_flags | libc::O_NONBLOCK) < 0
+            {
+                return Err(io::Error::last_os_error().to_string());
+            }
             // Save the host cursor before entering the separate screen buffer.
             write_output(b"\x1b7\x1b[?1049h\x1b[?25l\x1b[2J")?;
             Ok(session)
@@ -443,14 +453,63 @@ impl Drop for RawSession {
         unsafe {
             libc::tcsetattr(0, libc::TCSANOW, &self.original);
         }
-        let _ = write_output(b"\x1b[0m\x1b[?1049l\x1b8\x1b[?25h");
+        let _ = write_output_inner(b"\x1b[0m\x1b[?1049l\x1b8\x1b[?25h", true);
+        if self.output_flags >= 0 {
+            unsafe {
+                libc::fcntl(1, libc::F_SETFL, self.output_flags);
+            }
+        }
     }
 }
 fn write_output(bytes: &[u8]) -> Result<(), String> {
-    let mut out = io::stdout().lock();
-    out.write_all(bytes)
-        .and_then(|_| out.flush())
-        .map_err(|e| e.to_string())
+    write_output_inner(bytes, false)
+}
+fn write_output_inner(mut bytes: &[u8], cleanup: bool) -> Result<(), String> {
+    let deadline = Instant::now() + Duration::from_millis(if cleanup { 250 } else { 1000 });
+    while !bytes.is_empty() {
+        if !cleanup && crate::signals::pending().is_some() {
+            return Ok(());
+        }
+        let n = unsafe { libc::write(1, bytes.as_ptr().cast(), bytes.len()) };
+        if n > 0 {
+            bytes = &bytes[n as usize..];
+            continue;
+        }
+        let e = io::Error::last_os_error();
+        if n == 0 {
+            return Err("terminal output closed".into());
+        }
+        if !matches!(
+            e.kind(),
+            io::ErrorKind::Interrupted | io::ErrorKind::WouldBlock
+        ) {
+            return Err(e.to_string());
+        }
+        if Instant::now() >= deadline {
+            return Err("terminal output timed out".into());
+        }
+        let mut descriptor = libc::pollfd {
+            fd: 1,
+            events: libc::POLLOUT,
+            revents: 0,
+        };
+        unsafe {
+            libc::poll(&mut descriptor, 1, 25);
+        }
+    }
+    Ok(())
+}
+/// Best-effort final host output, preserving flags and avoiding a blocked PTY.
+pub fn write_final_output(bytes: &[u8]) -> Result<(), String> {
+    let flags = unsafe { libc::fcntl(1, libc::F_GETFL) };
+    if flags < 0 || unsafe { libc::fcntl(1, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+        return Err(io::Error::last_os_error().to_string());
+    }
+    let result = write_output_inner(bytes, true);
+    unsafe {
+        libc::fcntl(1, libc::F_SETFL, flags);
+    }
+    result
 }
 fn size() -> Result<(usize, usize), String> {
     let mut ws: libc::winsize = unsafe { std::mem::zeroed() };
@@ -576,14 +635,30 @@ fn render_frame(machine: &Machine, k: &Keyboard, now: u64, height: usize, width:
     out
 }
 
+#[derive(Debug, serde::Serialize)]
+pub struct InteractiveOutcome {
+    pub signal: Option<i32>,
+    pub keys_delivered: u64,
+    pub keys_pending: usize,
+    pub notices: Vec<String>,
+    pub delivered_keys: std::collections::VecDeque<crate::report::KeyInput>,
+    pub replay_complete: bool,
+}
 /// Run to an absolute guest step limit, or until host exit/guest fault.
 pub fn run(
     machine: &mut Machine,
     limit: Option<u64>,
     bindings: BTreeMap<String, u8>,
-) -> Result<Value, String> {
+) -> Result<InteractiveOutcome, String> {
+    if !machine.config().extended()
+        || !machine.config().experimental()
+        || machine.config().capture() != crate::config::CaptureMode::Tail
+        || machine.bus.terminal.capture_mode() != crate::config::CaptureMode::Tail
+    {
+        return Err("interactive requires extended experimental terminal with tail capture".into());
+    }
+    let signals = crate::signals::SignalSession::enter().map_err(|e| e.to_string())?;
     let _session = RawSession::enter()?;
-    machine.bus.terminal.capture_tail = true;
     let start = Instant::now();
     let mut k = Keyboard::new();
     k.bindings = bindings;
@@ -595,7 +670,14 @@ pub fn run(
     let mut last_draw = Instant::now();
     let end = limit;
     let mut next_poll = machine.steps;
+    let mut signal = None;
+    let mut history = crate::report::ReplayHistory::default();
     while machine.reason.is_none() && end.is_none_or(|end| machine.steps < end) {
+        if let Some(number) = signals.pending_signal() {
+            signal = Some(number);
+            machine.reason = Some("signal".into());
+            break;
+        }
         if machine.steps >= next_poll {
             next_poll = machine.steps.saturating_add(2048);
             (height, width) = size()?;
@@ -670,8 +752,12 @@ pub fn run(
             && machine.bus.terminal.connected
             && machine.steps >= k.next_step
         {
-            if let Some(key) = k.pending.pop_front() {
-                machine.bus.terminal.send_key(key).map_err(|f| f.reason)?;
+            if let Some(key) = k.pending.front().copied() {
+                if machine.send_key(key).is_err() {
+                    break;
+                }
+                k.pending.pop_front();
+                history.record(machine.steps, key);
                 k.delivered += 1;
                 k.next_step = machine.steps.saturating_add(2000);
             }
@@ -681,9 +767,15 @@ pub fn run(
     if machine.reason.is_none() {
         machine.reason = Some("step_limit".into());
     }
-    Ok(
-        json!({"keys_delivered":k.delivered,"keys_pending":k.pending.len(),"notices":k.notices,"exit_keys":["Ctrl-]","Ctrl-C"]}),
-    )
+    let (delivered_keys, replay_complete) = history.into_parts();
+    Ok(InteractiveOutcome {
+        delivered_keys,
+        replay_complete,
+        signal,
+        keys_delivered: k.delivered,
+        keys_pending: k.pending.len(),
+        notices: k.notices.into_iter().collect(),
+    })
 }
 
 #[derive(Default)]

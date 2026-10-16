@@ -401,3 +401,13 @@ Unit tests cover arithmetic edge cases, autoindexing, interrupt timing, block-co
 overlap and failure atomicity, byte fields, bank isolation, and controller behavior.
 Frozen synthetic fixtures check state and memory results. These checks establish
 implementation consistency; they do not substitute for a vendor specification.
+
+
+Instruction-time orchestration is owned by `Machine::execute_step`, shared by
+boot execution and fixture execution. `Cpu::step` forwards to that method;
+`Cpu::execute` alone performs no terminal tick or interrupt entry. The independent
+base-ISA corpus and its limitations are documented in
+[reference provenance](../tests/REFERENCE.md). The original 8,262 frozen cases
+remain unchanged; 610 new cases include 64 short native programs. Controller
+integration programs separately cover IRQ delay/masks, bank selection, DMA and
+terminal event acknowledgement.

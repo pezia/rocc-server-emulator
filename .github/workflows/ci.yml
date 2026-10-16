@@ -1,0 +1,36 @@
+name: Emulator checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        rust: ['1.87.0', stable]
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Rust
+        run: rustup toolchain install '${{ matrix.rust }}' --profile minimal
+      - name: Rust tests
+        run: cargo +${{ matrix.rust }} test --locked
+      - name: Release executable
+        run: cargo +${{ matrix.rust }} build --release --locked
+      - name: Host terminal and persistence tests
+        run: python3 tests/cli.py
+      - name: Independent model and reproducibility
+        run: |
+          python3 tests/reference_tests.py
+          python3 tests/generate_reference.py --check
+      - name: CPU reference regressions
+        run: python3 tests/regression.py --cpu
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - run: rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+      - run: cargo +stable fmt --check
+      - run: cargo +stable clippy --all-targets --locked -- -D warnings

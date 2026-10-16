@@ -6,22 +6,42 @@ use rocc_emulator::{
 use serde_json::{json, Value};
 use std::{
     env,
-    fs::{self, File, OpenOptions},
-    io::{self, Read, Write},
+    fs::{self, File},
+    io::{self, Read},
     path::{Path, PathBuf},
     time::Instant,
 };
 
 fn main() {
-    if let Err(e) = run() {
-        eprintln!("rocc-emulator: {e}");
-        std::process::exit(1);
+    match run() {
+        Ok(code) => {
+            if code != 0 {
+                std::process::exit(code);
+            }
+        }
+        Err(e) => {
+            let message = format!("rocc-emulator: {e}\n");
+            // stderr may share a full PTY with stdout after interactive cleanup.
+            let flags = unsafe { libc::fcntl(2, libc::F_GETFL) };
+            if flags >= 0 && unsafe { libc::fcntl(2, libc::F_SETFL, flags | libc::O_NONBLOCK) } == 0
+            {
+                unsafe {
+                    libc::write(2, message.as_ptr().cast(), message.len());
+                    libc::fcntl(2, libc::F_SETFL, flags);
+                }
+            }
+            std::process::exit(1);
+        }
     }
 }
 fn help() {
     println!(
         "Native ROCC emulator (experimental inferred hardware)\n\
 Usage: rocc-emulator boot IMAGE [OPTIONS]\n\
+  --event-limit N          Pending terminal events: default 4096, max 65536\n\
+  --capture-bytes N        Retained bytes: default 1048576, max 67108864\n\
+  --packet-limit N         Retained packets: default 4096, max 65536\n\
+  compact-overlay IMAGE --overlay SOURCE --output NEWPATH\n\
   --keymap PATH             JSON host-key to raw ROCC-byte bindings (interactive)\n\
   --interactive             Live terminal (Ctrl-] or Ctrl-C exits)\n\
   --steps N                 Instructions: default 1000000, unlimited live\n\
@@ -39,21 +59,47 @@ Usage: rocc-emulator boot IMAGE [OPTIONS]\n\
 fn number(s: &str, label: &str) -> Result<u64, String> {
     s.parse().map_err(|_| format!("invalid {label}: {s}"))
 }
-fn run() -> Result<(), String> {
+fn run() -> Result<i32, String> {
     let mut args = env::args().skip(1).peekable();
     if matches!(
         args.peek().map(String::as_str),
         None | Some("--help" | "-h")
     ) {
         help();
-        return Ok(());
+        return Ok(0);
+    }
+    if args.peek().map(String::as_str) == Some("compact-overlay") {
+        args.next();
+        let image = PathBuf::from(args.next().ok_or("compact-overlay requires IMAGE")?);
+        let (mut source, mut output) = (None, None);
+        while let Some(arg) = args.next() {
+            let value = PathBuf::from(
+                args.next()
+                    .ok_or_else(|| format!("missing value for {arg}"))?,
+            );
+            match arg.as_str() {
+                "--overlay" if source.is_none() => source = Some(value),
+                "--output" if output.is_none() => output = Some(value),
+                _ => return Err(format!("unknown or duplicate compaction option: {arg}")),
+            }
+        }
+        let summary = rocc_emulator::compact_overlay(
+            &image,
+            &source.ok_or("compact-overlay requires --overlay SOURCE")?,
+            &output.ok_or("compact-overlay requires --output NEWPATH")?,
+        )?;
+        println!(
+            "Compacted {} bytes to {} bytes ({} blocks). Source overlay and base image unchanged.",
+            summary.original_bytes, summary.compacted_bytes, summary.blocks
+        );
+        return Ok(0);
     }
     if args.peek().map(String::as_str) == Some("cpu-cases") {
         args.next();
         if args.next().is_some() {
             return Err("cpu-cases takes no arguments".into());
         }
-        return cpu_cases();
+        return cpu_cases().map(|_| 0);
     }
     if args.peek().map(String::as_str) == Some("boot") {
         args.next();
@@ -70,6 +116,7 @@ fn run() -> Result<(), String> {
     let mut bits = None;
     let mut expected = None;
     let mut keys = Vec::new();
+    let (mut event_limit, mut capture_bytes, mut packet_limit) = (4096, 1048576, 4096);
     while let Some(arg) = args.next() {
         if arg == "--interactive" {
             interactive = true;
@@ -77,7 +124,7 @@ fn run() -> Result<(), String> {
         }
         if arg == "--help" || arg == "-h" {
             help();
-            return Ok(());
+            return Ok(0);
         }
         if !arg.starts_with('-') {
             if image.replace(PathBuf::from(arg)).is_some() {
@@ -89,6 +136,9 @@ fn run() -> Result<(), String> {
             .next()
             .ok_or_else(|| format!("missing value for {arg}"))?;
         match arg.as_str() {
+            "--event-limit" => event_limit = number(&value, "event limit")?,
+            "--capture-bytes" => capture_bytes = number(&value, "capture bytes")?,
+            "--packet-limit" => packet_limit = number(&value, "packet limit")?,
             "--keymap" => keymap = Some(value),
             "--steps" => steps = Some(number(&value, "step budget")?),
             "--connect-after" => connect = Some(number(&value, "connection time")?),
@@ -175,6 +225,32 @@ fn run() -> Result<(), String> {
     if interactive && unsafe { libc::isatty(0) != 1 || libc::isatty(1) != 1 } {
         return Err("interactive mode requires a terminal on stdin and stdout".into());
     }
+    use rocc_emulator::config::*;
+    let limits = ResourceLimits::new(
+        usize::try_from(event_limit).map_err(|_| "event limit too large")?,
+        usize::try_from(capture_bytes).map_err(|_| "capture limit too large")?,
+        usize::try_from(packet_limit).map_err(|_| "packet limit too large")?,
+    )?;
+    let config = MachineConfig::new(
+        if extended {
+            CpuProfile::Extended
+        } else {
+            CpuProfile::Loader
+        },
+        bits as u8,
+        if experimental {
+            TerminalProfile::Experimental
+        } else {
+            TerminalProfile::None
+        },
+        connect,
+        limits,
+        if interactive {
+            CaptureMode::Tail
+        } else {
+            CaptureMode::Stop
+        },
+    )?;
     let image = image.ok_or("image path is required")?;
     let overlay = overlay.unwrap_or_else(|| {
         let mut name = image.as_os_str().to_os_string();
@@ -189,7 +265,7 @@ fn run() -> Result<(), String> {
         .read_to_end(&mut raw)
         .map_err(|e| e.to_string())?;
     let started = Instant::now();
-    let mut m = Machine::new(raw, extended, bits as u8, experimental, connect)?;
+    let mut m = Machine::with_config(raw, config)?;
     if expected.as_ref().is_some_and(|v| v != &m.image_sha256) {
         return Err("image SHA256 differs from expected value".into());
     }
@@ -204,10 +280,9 @@ fn run() -> Result<(), String> {
         let mut key_index = 0;
         while m.steps < steps.unwrap() && m.reason.is_none() {
             while key_index < keys.len() && keys[key_index].0 == m.steps {
-                m.bus
-                    .terminal
-                    .send_key(keys[key_index].1)
-                    .map_err(|f| f.reason)?;
+                if m.send_key(keys[key_index].1).is_err() {
+                    break;
+                }
                 key_index += 1;
             }
             m.step();
@@ -215,74 +290,55 @@ fn run() -> Result<(), String> {
         None
     };
     let elapsed = started.elapsed().as_secs_f64();
-    let mut data = m.report();
-    data["elapsed_seconds"] = json!(elapsed);
-    data["input"] = json!(fs::canonicalize(&image).map_err(|e| e.to_string())?);
-    data["overlay_path"] = json!(overlay_path);
-    if let Some(v) = interactive_report {
-        data["interactive"] = v;
-    }
+    let signal = interactive_report.as_ref().and_then(|r| r.signal);
+    let mut final_output = String::new();
     if let Some(dest) = destination {
-        publish(&dest, &data)?;
-        println!("Report: {}", dest.display());
+        let metadata = rocc_emulator::report::RunMetadata {
+            input: Some(fs::canonicalize(&image).map_err(|e| e.to_string())?),
+            overlay_path: Some(overlay_path),
+            elapsed_seconds: elapsed,
+            step_budget: steps,
+            batch_keys: keys
+                .into_iter()
+                .map(|(step, byte)| rocc_emulator::report::KeyInput { step, byte })
+                .collect(),
+            interactive: interactive_report,
+        };
+        rocc_emulator::artifact::publish_new(&dest, |file| {
+            rocc_emulator::report::write_report(file, &m, &metadata)
+        })
+        .map_err(|e| e.to_string())?;
+        final_output.push_str(&format!("Report: {}\n", dest.display()));
     }
-    println!(
-        "ROCC Rust: {} at RAM word {} after {} instructions ({elapsed:.3}s)",
-        data["reason"].as_str().unwrap(),
-        m.cpu.pc,
-        m.steps
-    );
-    println!(
-        "Disk: {} reads, {} writes to persistent overlay ({} blocks). Original image unchanged.",
-        m.bus.disk.reads,
-        m.bus.disk.writes,
-        m.bus.disk.overlay.len()
-    );
-    println!("Overlay: {}", overlay.display());
+    if let Some(signal) = signal {
+        return Ok(128 + signal);
+    }
+    let summary = m.summary();
+    final_output.push_str(&format!(
+        "ROCC Rust: {} at RAM word {} after {} instructions ({elapsed:.3}s)\n",
+        summary.reason, summary.pc, summary.steps
+    ));
+    final_output.push_str(&format!("Disk: {} reads, {} writes to persistent overlay ({} blocks). Original image unchanged.\nOverlay: {}\n",summary.disk_reads,summary.disk_writes,summary.overlay_blocks,overlay.display()));
     if m.bus.terminal.total_display_bytes > 0 {
-        for line in data["display"]["screen"]["lines"].as_array().unwrap() {
-            println!("{}", line.as_str().unwrap());
+        for row in &summary.screen.cells {
+            final_output.push_str(String::from_utf8_lossy(row).trim_end());
+            final_output.push('\n');
         }
+    }
+    if interactive {
+        let _ = rocc_emulator::interactive::write_final_output(final_output.as_bytes());
+    } else {
+        print!("{final_output}");
     }
     if m.fault.is_some() {
         return Err(format!("guest stopped: {}", m.reason.unwrap()));
     }
-    Ok(())
+    Ok(signal.map_or(0, |s| 128 + s))
 }
 
 fn check_destination(path: &Path) -> Result<PathBuf, String> {
-    if fs::symlink_metadata(path).is_ok() {
-        return Err("report already exists; choose a new path".into());
-    }
-    let parent = path
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
-    let parent = fs::canonicalize(parent).map_err(|e| format!("report parent: {e}"))?;
-    let dest = parent.join(path.file_name().ok_or("report needs a filename")?);
-    Ok(dest)
+    rocc_emulator::artifact::check_destination(path).map_err(|e| e.to_string())
 }
-fn publish(dest: &Path, data: &Value) -> Result<(), String> {
-    let temporary = dest
-        .parent()
-        .unwrap()
-        .join(format!(".rocc-rust-report-{}", std::process::id()));
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&temporary)
-        .map_err(|e| e.to_string())?;
-    let result = (|| -> Result<(), String> {
-        serde_json::to_writer_pretty(&mut file, data).map_err(|e| e.to_string())?;
-        file.write_all(b"\n").map_err(|e| e.to_string())?;
-        file.sync_all().map_err(|e| e.to_string())?;
-        fs::hard_link(&temporary, dest).map_err(|e| e.to_string())?;
-        Ok(())
-    })();
-    let cleanup = fs::remove_file(&temporary).map_err(|e| e.to_string());
-    result.and(cleanup)
-}
-
 fn uint(v: &Value, key: &str, max: u64) -> Result<u64, String> {
     v[key]
         .as_u64()
@@ -307,8 +363,8 @@ fn cpu_cases() -> Result<(), String> {
         if ![15, 16].contains(&bits) || (extended && bits != 16) {
             return Err("invalid fixture bits".into());
         }
-        let mut cpu = Cpu::new(bits, extended);
-        cpu.pc = uint(c, "pc", cpu.memory.mask as u64)? as u16;
+        let mut cpu = Cpu::new(bits, extended).unwrap();
+        cpu.pc = uint(c, "pc", cpu.memory.mask() as u64)? as u16;
         cpu.carry = uint(c, "carry", 1)? as u16;
         let ac = c["ac"]
             .as_array()
@@ -321,9 +377,20 @@ fn cpu_cases() -> Result<(), String> {
                 .ok_or("invalid accumulator")? as u16;
         }
         if c.get("bank").is_some() {
-            cpu.memory.bank = uint(c, "bank", (cpu.memory.banks - 1) as u64)? as usize;
+            cpu.memory
+                .set_mapping(rocc_emulator::memory::Mapping::SelectedBank(uint(
+                    c,
+                    "bank",
+                    (cpu.memory.banks() - 1) as u64,
+                )?
+                    as u8))
+                .map_err(|f| f.reason().to_string())?;
         }
-        cpu.global_only = c["global_only"].as_bool().unwrap_or(false);
+        if c["global_only"].as_bool().unwrap_or(false) {
+            cpu.memory
+                .set_mapping(rocc_emulator::memory::Mapping::GlobalOnly)
+                .unwrap();
+        }
         for entry in c["memory"].as_array().ok_or("invalid fixture memory")? {
             let a = entry
                 .as_array()
@@ -331,13 +398,15 @@ fn cpu_cases() -> Result<(), String> {
                 .ok_or("invalid memory entry")?;
             let addr = a[0]
                 .as_u64()
-                .filter(|&n| n < (cpu.memory.storage.len() as u64))
+                .filter(|&n| n < (cpu.memory.iter_physical().count() as u64))
                 .ok_or("invalid physical address")? as usize;
             let val = a[1]
                 .as_u64()
                 .filter(|&n| n <= 65535)
                 .ok_or("invalid word")? as u16;
-            cpu.memory.storage[addr] = Some(val);
+            cpu.memory
+                .initialize_physical(addr, val)
+                .map_err(|f| f.reason().to_string())?;
         }
         let steps = uint(c, "steps", 100_000)?;
         let mut bus = Bus::new(vec![0; 6144], extended, false, None);
@@ -351,15 +420,14 @@ fn cpu_cases() -> Result<(), String> {
                     }
                 }
                 Err(f) => {
-                    reason = f.reason;
+                    reason = f.reason().to_string();
                     break;
                 }
             }
         }
         let memory: Vec<_> = cpu
             .memory
-            .storage
-            .iter()
+            .iter_physical()
             .enumerate()
             .filter_map(|(a, v)| v.map(|w| json!([a, w])))
             .collect();
