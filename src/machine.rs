@@ -74,7 +74,7 @@ impl Machine {
             return Err("invalid address width for profile".into());
         }
         let image_sha256 = digest(&raw);
-        let mut cpu = Cpu::new(address_bits, extended);
+        let mut cpu = Cpu::new(address_bits, extended)?;
         for n in 0..128 {
             cpu.memory
                 .set(n, u16::from_be_bytes([raw[2 * n], raw[2 * n + 1]]));
@@ -116,6 +116,22 @@ impl Machine {
         }
         Ok(())
     }
+    pub fn execute_step(cpu: &mut Cpu, bus: &mut Bus) -> Result<crate::cpu::StepInfo, Fault> {
+        cpu.last_instruction = None;
+        if bus.extended() {
+            bus.terminal.tick();
+            if bus.delay > 0 {
+                bus.delay -= 1;
+            } else if bus.enabled && bus.pending().is_some() {
+                let vector = cpu.read(1)?;
+                cpu.memory.write(0, cpu.pc)?;
+                cpu.pc = vector;
+                bus.enabled = false;
+                bus.interrupts += 1;
+            }
+        }
+        cpu.execute(bus)
+    }
     pub fn step(&mut self) {
         if self.reason.is_some() {
             return;
@@ -146,11 +162,11 @@ impl Machine {
         self.steps += 1;
     }
     pub fn state(&self) -> Value {
-        cpu_state(&self.cpu, self.bus.extended)
+        cpu_state(&self.cpu, self.bus.extended())
     }
     pub fn report(&self) -> Value {
-        let mut memory = Vec::with_capacity(self.cpu.memory.storage.len() * 3);
-        for v in &self.cpu.memory.storage {
+        let mut memory = Vec::with_capacity(self.cpu.memory.iter_physical().count() * 3);
+        for v in self.cpu.memory.iter_physical() {
             match v {
                 Some(w) => {
                     memory.push(1);
@@ -159,7 +175,7 @@ impl Machine {
                 None => memory.extend([0, 0, 0]),
             }
         }
-        json!({"implementation":"rust", "profile":if self.bus.extended {"rocc-startup-v2"} else {"rocc-startup-v1"},
+        json!({"implementation":"rust", "profile":if self.bus.extended() {"rocc-startup-v2"} else {"rocc-startup-v1"},
             "warning":"Experimental inferred hardware; not complete vendor hardware.",
             "trace_format":"bounded recent-instruction trace",
             "image_sha256":self.image_sha256,"steps":self.steps,"reason":self.reason.as_deref().unwrap_or("step_limit"),
@@ -175,10 +191,10 @@ impl Machine {
 pub fn cpu_state(cpu: &Cpu, extended: bool) -> Value {
     let mut v = json!({"pc":cpu.pc,"ac":cpu.ac,"carry":cpu.carry});
     if extended {
-        v["bank"] = if cpu.global_only {
+        v["bank"] = if cpu.memory.global_only() {
             Value::Null
         } else {
-            json!(cpu.memory.bank)
+            json!(cpu.memory.bank())
         };
     }
     v

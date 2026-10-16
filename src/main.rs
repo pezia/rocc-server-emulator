@@ -337,8 +337,8 @@ fn cpu_cases() -> Result<(), String> {
         if ![15, 16].contains(&bits) || (extended && bits != 16) {
             return Err("invalid fixture bits".into());
         }
-        let mut cpu = Cpu::new(bits, extended);
-        cpu.pc = uint(c, "pc", cpu.memory.mask as u64)? as u16;
+        let mut cpu = Cpu::new(bits, extended).unwrap();
+        cpu.pc = uint(c, "pc", cpu.memory.mask() as u64)? as u16;
         cpu.carry = uint(c, "carry", 1)? as u16;
         let ac = c["ac"]
             .as_array()
@@ -351,9 +351,20 @@ fn cpu_cases() -> Result<(), String> {
                 .ok_or("invalid accumulator")? as u16;
         }
         if c.get("bank").is_some() {
-            cpu.memory.bank = uint(c, "bank", (cpu.memory.banks - 1) as u64)? as usize;
+            cpu.memory
+                .set_mapping(rocc_emulator::memory::Mapping::SelectedBank(uint(
+                    c,
+                    "bank",
+                    (cpu.memory.banks() - 1) as u64,
+                )?
+                    as u8))
+                .map_err(|f| f.reason().to_string())?;
         }
-        cpu.global_only = c["global_only"].as_bool().unwrap_or(false);
+        if c["global_only"].as_bool().unwrap_or(false) {
+            cpu.memory
+                .set_mapping(rocc_emulator::memory::Mapping::GlobalOnly)
+                .unwrap();
+        }
         for entry in c["memory"].as_array().ok_or("invalid fixture memory")? {
             let a = entry
                 .as_array()
@@ -361,13 +372,15 @@ fn cpu_cases() -> Result<(), String> {
                 .ok_or("invalid memory entry")?;
             let addr = a[0]
                 .as_u64()
-                .filter(|&n| n < (cpu.memory.storage.len() as u64))
+                .filter(|&n| n < (cpu.memory.iter_physical().count() as u64))
                 .ok_or("invalid physical address")? as usize;
             let val = a[1]
                 .as_u64()
                 .filter(|&n| n <= 65535)
                 .ok_or("invalid word")? as u16;
-            cpu.memory.storage[addr] = Some(val);
+            cpu.memory
+                .initialize_physical(addr, val)
+                .map_err(|f| f.reason().to_string())?;
         }
         let steps = uint(c, "steps", 100_000)?;
         let mut bus = Bus::new(vec![0; 6144], extended, false, None);
@@ -388,8 +401,7 @@ fn cpu_cases() -> Result<(), String> {
         }
         let memory: Vec<_> = cpu
             .memory
-            .storage
-            .iter()
+            .iter_physical()
             .enumerate()
             .filter_map(|(a, v)| v.map(|w| json!([a, w])))
             .collect();

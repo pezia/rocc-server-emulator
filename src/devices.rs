@@ -1,5 +1,5 @@
 //! Inferred controllers with strict validation of unsupported operations.
-use crate::{cpu::Cpu, terminal::Terminal, Fault, IoResult};
+use crate::{memory::Memory, terminal::Terminal, Fault, IoResult};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -55,7 +55,7 @@ impl Disk {
         self.dma_end = None;
         self.control_active = false;
     }
-    fn transfer(&mut self, cpu: &mut Cpu, extended: bool) -> Result<IoResult, Fault> {
+    fn transfer(&mut self, memory: &mut Memory, extended: bool) -> Result<IoResult, Fault> {
         if extended && self.a == Some(0x2000) && self.c == Some(0x2000) {
             self.controls += 1;
             self.control_active = true;
@@ -65,10 +65,10 @@ impl Disk {
         }
         self.control_active = false;
         if extended
-            && cpu.global_only
+            && memory.global_only()
             && self
                 .b
-                .is_some_and(|b| b as usize + 128 > cpu.memory.global_words)
+                .is_some_and(|b| b as usize + 128 > memory.global_words())
         {
             return Err(Fault::with(
                 crate::FaultKind::UnmappedMemoryBank,
@@ -99,7 +99,7 @@ impl Disk {
                 json!({"offset":offset,"head":head}),
             ));
         }
-        if b + 128 > cpu.memory.logical_words {
+        if b + 128 > memory.logical_words() {
             return Err(Fault::with(
                 crate::FaultKind::DiskDmaBounds,
                 json!({"RAM_word":b}),
@@ -108,7 +108,7 @@ impl Disk {
         if a & 0x1000 != 0 {
             let mut raw = Vec::with_capacity(256);
             for n in 0..128 {
-                raw.extend_from_slice(&cpu.read(b + n)?.to_be_bytes());
+                raw.extend_from_slice(&memory.read(b + n)?.to_be_bytes());
             }
             if let Some(journal) = &mut self.journal {
                 journal.write_block(offset, &raw).map_err(|error| {
@@ -127,8 +127,7 @@ impl Disk {
                 .map(Vec::as_slice)
                 .unwrap_or(&self.base[offset..offset + 256]);
             for n in 0..128 {
-                cpu.memory
-                    .set(b + n, u16::from_be_bytes([raw[n * 2], raw[n * 2 + 1]]));
+                memory.set(b + n, u16::from_be_bytes([raw[n * 2], raw[n * 2 + 1]]));
             }
             self.reads += 1;
         }
@@ -141,7 +140,7 @@ impl Disk {
     }
     pub fn io(
         &mut self,
-        cpu: &mut Cpu,
+        memory: &mut Memory,
         extended: bool,
         op: u8,
         p: u8,
@@ -172,7 +171,7 @@ impl Disk {
             (4, 0) => self.b = Some(v),
             (6, 1) => {
                 self.c = Some(v);
-                return self.transfer(cpu, extended);
+                return self.transfer(memory, extended);
             }
             (1, 0 | 2) => {
                 if p == 2 {
@@ -193,7 +192,7 @@ impl Disk {
 }
 
 pub struct Bus {
-    pub extended: bool,
+    extended: bool,
     pub enabled: bool,
     pub delay: u8,
     pub mask: u16,
@@ -230,6 +229,9 @@ impl Bus {
             aux41: vec![],
         }
     }
+    pub fn extended(&self) -> bool {
+        self.extended
+    }
     pub fn pending(&self) -> Option<u8> {
         if self.disk.done && self.mask & 0x2000 == 0 {
             Some(0o33)
@@ -239,10 +241,17 @@ impl Bus {
             None
         }
     }
-    pub fn io(&mut self, cpu: &mut Cpu, num: u8, op: u8, p: u8, v: u16) -> Result<IoResult, Fault> {
+    pub fn io(
+        &mut self,
+        memory: &mut Memory,
+        num: u8,
+        op: u8,
+        p: u8,
+        v: u16,
+    ) -> Result<IoResult, Fault> {
         let mut r = IoResult::default();
         match num {
-            0o33 => return self.disk.io(cpu, self.extended, op, p, v),
+            0o33 => return self.disk.io(memory, self.extended, op, p, v),
             0o50 => {
                 if !self.extended && (op, p) != (2, 3) {
                     return Err(Fault::with(
@@ -250,7 +259,7 @@ impl Bus {
                         json!({"operation":op,"pulse":p,"value":v}),
                     ));
                 }
-                return self.terminal.io(&cpu.memory, op, p, v);
+                return self.terminal.io(memory, op, p, v);
             }
             0o53 => {
                 if (op, p) == (2, 3) && self.setup53 < 4 && v == self.setup53 as u16 * 128 {
@@ -319,16 +328,15 @@ impl Bus {
             0o35 if self.extended => {
                 if op == 2 && p <= 1 {
                     if v == 0xffff {
-                        cpu.global_only = true;
+                        memory.set_mapping(crate::memory::Mapping::GlobalOnly)?;
                     } else {
-                        if (v >> 8) as usize >= cpu.memory.banks {
+                        if (v >> 8) as usize >= memory.banks() {
                             return Err(Fault::with(
                                 crate::FaultKind::UnsupportedMemoryBank,
                                 json!({"selector":v}),
                             ));
                         }
-                        cpu.global_only = false;
-                        cpu.memory.bank = (v >> 8) as usize;
+                        memory.set_mapping(crate::memory::Mapping::SelectedBank((v >> 8) as u8))?;
                     }
                     self.selected = v;
                     self.bank_selectors.insert(v);
@@ -408,31 +416,34 @@ mod tests {
     use super::*;
     #[test]
     fn overlay_round_trip_never_changes_backing_image() {
-        let mut cpu = Cpu::new(16, true);
+        let mut cpu = crate::cpu::Cpu::new(16, true).unwrap();
         let mut disk = Disk::new(vec![0; 6144]);
         for n in 0..128 {
             cpu.memory.set(256 + n, n as u16);
         }
-        disk.io(&mut cpu, true, 2, 0, 0x1000).unwrap();
-        disk.io(&mut cpu, true, 4, 0, 256).unwrap();
-        disk.io(&mut cpu, true, 6, 1, 0).unwrap();
+        disk.io(&mut cpu.memory, true, 2, 0, 0x1000).unwrap();
+        disk.io(&mut cpu.memory, true, 4, 0, 256).unwrap();
+        disk.io(&mut cpu.memory, true, 6, 1, 0).unwrap();
         assert!(disk.base.iter().all(|&x| x == 0));
-        disk.io(&mut cpu, true, 2, 0, 0).unwrap();
-        disk.io(&mut cpu, true, 4, 0, 512).unwrap();
-        disk.io(&mut cpu, true, 6, 1, 0).unwrap();
+        disk.io(&mut cpu.memory, true, 2, 0, 0).unwrap();
+        disk.io(&mut cpu.memory, true, 4, 0, 512).unwrap();
+        disk.io(&mut cpu.memory, true, 6, 1, 0).unwrap();
         assert_eq!(cpu.memory.get(639), Some(127));
         assert_eq!((disk.reads, disk.writes), (1, 1));
-        assert_eq!(disk.io(&mut cpu, true, 3, 0, 0).unwrap().value, Some(640));
+        assert_eq!(
+            disk.io(&mut cpu.memory, true, 3, 0, 0).unwrap().value,
+            Some(640)
+        );
     }
     #[test]
     fn failed_write_is_atomic_and_control_needs_no_dma() {
-        let mut cpu = Cpu::new(16, true);
+        let mut cpu = crate::cpu::Cpu::new(16, true).unwrap();
         let mut disk = Disk::new(vec![0; 6144]);
         disk.a = Some(0x1000);
         disk.b = Some(1000);
         disk.c = Some(0);
         assert_eq!(
-            disk.transfer(&mut cpu, true).unwrap_err().reason(),
+            disk.transfer(&mut cpu.memory, true).unwrap_err().reason(),
             "uninitialized_memory"
         );
         assert!(disk.overlay.is_empty());
@@ -440,26 +451,31 @@ mod tests {
         disk.a = Some(0x2000);
         disk.b = None;
         disk.c = Some(0x2000);
-        disk.transfer(&mut cpu, true).unwrap();
+        disk.transfer(&mut cpu.memory, true).unwrap();
         assert_eq!(disk.controls, 1);
         assert!(disk.done);
     }
     #[test]
     fn strict_setup_and_global_dma_fault_precedence_match_reference() {
-        let mut cpu = Cpu::new(16, true);
+        let mut cpu = crate::cpu::Cpu::new(16, true).unwrap();
         let mut bus = Bus::new(vec![0; 6144], false, false, None);
         assert_eq!(
-            bus.io(&mut cpu, 0o50, 7, 0, 0).unwrap_err().reason(),
+            bus.io(&mut cpu.memory, 0o50, 7, 0, 0).unwrap_err().reason(),
             "unsupported_setup_operation"
         );
         bus.extended = true;
-        let f = bus.io(&mut cpu, 0o53, 2, 3, 128).unwrap_err();
+        let f = bus.io(&mut cpu.memory, 0o53, 2, 3, 128).unwrap_err();
         assert_eq!(f.reason().to_string(), "unsupported_setup_operation");
         assert_eq!(f.details()["value"], 128);
-        cpu.global_only = true;
+        cpu.memory
+            .set_mapping(crate::memory::Mapping::GlobalOnly)
+            .unwrap();
         bus.disk.b = Some(0xf000);
         assert_eq!(
-            bus.disk.transfer(&mut cpu, true).unwrap_err().reason(),
+            bus.disk
+                .transfer(&mut cpu.memory, true)
+                .unwrap_err()
+                .reason(),
             "unmapped_memory_bank"
         );
     }

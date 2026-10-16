@@ -144,7 +144,7 @@ impl Terminal {
         let count = (value & 0x7ff) as usize;
         let start = self.dma.unwrap() as usize;
         let end = start + count.div_ceil(2);
-        if end > memory.global_words {
+        if end > memory.global_words() {
             return Err(Fault::new(crate::FaultKind::TerminalDmaOutsideSharedMemory));
         }
         let mut raw = Vec::with_capacity(count + 1);
@@ -313,7 +313,7 @@ mod tests {
     use super::*;
     #[test]
     fn immediate_echo_ignores_stale_dma() {
-        let m = Memory::new(16, true);
+        let m = crate::cpu::Cpu::new(16, true).unwrap().memory;
         let mut t = Terminal::new(true, None);
         t.io(&m, 2, 0, 0).unwrap();
         t.io(&m, 4, 0, 0xed07).unwrap();
@@ -323,7 +323,7 @@ mod tests {
     }
     #[test]
     fn connection_precedes_coalesced_timer_event() {
-        let m = Memory::new(16, true);
+        let m = crate::cpu::Cpu::new(16, true).unwrap().memory;
         let mut t = Terminal::new(true, Some(1000));
         t.io(&m, 2, 0, 0xe001).unwrap();
         t.io(&m, 6, 0, 1).unwrap();
@@ -356,7 +356,7 @@ mod tests {
     }
     #[test]
     fn rejects_bad_dma_without_ack_and_busy_queries_do_not_execute() {
-        let m = Memory::new(16, true);
+        let m = crate::cpu::Cpu::new(16, true).unwrap().memory;
         let mut t = Terminal::new(true, None);
         for command in [0xe400, 0xe401, 0xec04, 0xf401, 0xc401] {
             t.io(&m, 2, 0, command).unwrap();
@@ -390,7 +390,7 @@ mod tests {
     }
     #[test]
     fn dma_is_big_endian_and_event_reads_preserve_tuple_until_clear() {
-        let mut m = Memory::new(16, true);
+        let mut m = crate::cpu::Cpu::new(16, true).unwrap().memory;
         m.set(200, 0x4142);
         m.set(201, 0x4300);
         let mut t = Terminal::new(true, None);
@@ -410,7 +410,7 @@ mod tests {
     }
     #[test]
     fn probe_only_accepts_eight_setup_values_and_absent_channels() {
-        let m = Memory::new(16, true);
+        let m = crate::cpu::Cpu::new(16, true).unwrap().memory;
         let mut t = Terminal::new(false, None);
         for n in 0..8 {
             t.io(&m, 2, 3, n * 128).unwrap();
