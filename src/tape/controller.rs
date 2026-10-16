@@ -93,9 +93,6 @@ impl TapeController {
         self.flags2 = 0;
         self.refresh();
     }
-    pub(crate) fn interrupt_pending(&self, _mask: u16) -> bool {
-        false
-    }
     pub(crate) fn io(
         &mut self,
         memory: &mut Memory,
@@ -167,6 +164,9 @@ impl TapeController {
         let count = self
             .count
             .ok_or_else(|| Fault::new(FaultKind::TapeRegisterUninitialized))?;
+        if count & 0x7fff == 0 && self.command & 0x38 == 0 {
+            return Ok(4096);
+        }
         let n = (0x8000u32 - u32::from(count & 0x7fff)) as usize;
         if !(1..=4096).contains(&n) {
             return Err(Self::protocol(6, 1, count));
@@ -250,8 +250,8 @@ impl TapeController {
                             self.result = (start + transferred) as u16;
                             self.count = Some((-(n as i32 - transferred as i32)) as u16);
                         }
-                        TapeRead::Mark => self.flags |= 0x8100,
-                        TapeRead::End => self.flags |= 0x8200,
+                        TapeRead::Mark => self.flags |= 0x0200,
+                        TapeRead::End => self.flags |= 0x0200,
                     }
                     self.status.reads += 1;
                 }
@@ -274,7 +274,7 @@ impl TapeController {
                     {
                         TapeStep::Record { .. } => {}
                         TapeStep::Mark => {
-                            self.flags |= 0x8100;
+                            self.flags |= 0x0200;
                             break;
                         }
                         TapeStep::End => {
@@ -296,7 +296,6 @@ impl TapeController {
                 self.session.write_mark().map_err(|e| self.media_fault(e))?;
                 self.status.writes += 1;
                 self.status.marks += 1;
-                self.flags |= 0x8100;
             }
             0x38 => {
                 if !self.session.writable {
@@ -395,7 +394,6 @@ mod tests {
         t.io(6, 1, 0x7ffe);
         assert!(t.controller.busy);
         assert!(!t.controller.done);
-        assert!(!t.controller.interrupt_pending(0));
         t.tick();
         assert!(!t.controller.busy);
         assert!(t.controller.done);
@@ -445,7 +443,8 @@ mod tests {
         let mut t = TestTape::new();
         t.io(2, 1, 0x30);
         t.tick();
-        assert_ne!(t.io(1, 0, 0).value.unwrap() & 0x100, 0);
+        // The offline WMS mark writer treats EOF in its completion mask as an error.
+        assert_eq!(t.io(1, 0, 0).value.unwrap() & 0x100, 0);
         t.io(2, 1, 0x20);
         t.tick();
         assert_eq!(t.controller.session.medium.position(), 0);
@@ -516,6 +515,30 @@ mod tests {
         t.tick();
         assert_ne!(t.io(1, 0, 0).value.unwrap() & 4, 0);
         assert_eq!(fs::metadata(t.dir.join("tape")).unwrap().len(), 12);
+    }
+    #[test]
+    fn zero_count_read_loads_one_bounded_record_for_original_loader() {
+        let mut t = TestTape::make(Some(&[2, 0, 0, 0, 0x12, 0x34, 2, 0, 0, 0]));
+        t.io(2, 0, 0);
+        t.io(4, 0, 300);
+        t.io(6, 1, 0);
+        t.tick();
+        assert_eq!(t.memory.read(300).unwrap(), 0x1234);
+        assert_eq!(t.memory.peek(301).unwrap(), None);
+        assert_eq!(t.io(3, 0, 0).value, Some(301));
+    }
+    #[test]
+    fn rocc_file_mark_is_eof_not_the_hard_error_status() {
+        let mut t = TestTape::make(Some(&[0; 4]));
+        t.io(2, 0, 0);
+        t.io(4, 0, 300);
+        t.io(6, 1, 0x7000);
+        t.tick();
+        let status = t.io(1, 0, 0).value.unwrap();
+        assert_eq!(status & 0x200, 0x200);
+        assert_eq!(status & 0x100, 0);
+        assert_eq!(t.io(3, 0, 0).value, Some(300));
+        assert_eq!(t.memory.peek(300).unwrap(), None);
     }
     #[test]
     fn bus_mount_and_cpu_reset_preserve_media_and_absent_behavior() {

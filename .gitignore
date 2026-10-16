@@ -4,6 +4,7 @@ __pycache__/
 *.img
 *.overlay
 *.ram
+*.tap
 .rocc-ram-*
 *.sqlite
 /report*.json

@@ -96,11 +96,15 @@ software. The ION delay permits one following instruction before recognition.
 A set mask bit disables the corresponding modeled interrupt source:
 
 ```text
-  disk 0o33:0x2000; terminal 0o50:0x8000.
+  extended disk 0o33:0x0040; terminal 0o50:0x8000.
+  loader compatibility model disk mask:0x2000.
 ```
 
 The emulator checks disk before terminal. Complete hardware priorities and other
 mask bits are OPEN; device numbers must not inherit a stock DG interrupt map.
+The extended disk mask supersedes the earlier provisional `0x2000`: the original
+offline save driver enables only bit `0x0040` with mask `0xFFBF` while waiting for
+disk completion. Tape paths currently poll completion and emit no tape IRQ.
 DIB 0o77 identifies a pending source but does not consume its peripheral event.
 
 Scheduling and context preservation are guest software operations. The CPU has
@@ -117,7 +121,8 @@ Normal DMA registers:
   A bit 12 (0x1000)   0=read disk into memory;1=write memory to disk
   A bit 5            low head-selection bit
   A bits 4..0        sector 0..31
-  A other bits      unsupported (except separate 0x2000 control)
+  A bit 13           accepted with write bit 12 by the extended offline driver
+  A other bits      unsupported (except separate controls below)
   B                 first CPU memory WORD address;128 words transferred
   C bits 9..0        cylinder
   C bits 15..10      paired-head index
@@ -143,8 +148,8 @@ Implemented I/O contract:
   DOAC A      latch A and clear busy/done
   DOB B       latch destination/source word address
   DOCS C      latch C and execute transfer; done=true,busy=false on success
-  DIA         status 0 for successful modeled operation
-  DIAC        status 0 and clear busy/done
+  DIA         status 0 for successful DMA; separate controls may supply status
+  DIAC        read status and clear busy/done
   DIB         end DMA word address (B+128)&0xFFFF, once initialized
   NIOC        reset controller latches/status and DMA-end result
   SKP         standard modeled busy/done conditions from ISA reference
@@ -159,9 +164,16 @@ Separate startup control:
 
 ```text
   A=0x2000, C=0x2000, issued with DOCS, completes without DMA.
+  Offline setup also uses A=0x2000, C=0x0C00 without DMA.
+  A=0x2800, B=0x1400, C=0 returns status 0x0100 without DMA.
   A following NIOP is admitted once for this control phase.
   No physical name such as seek/recalibrate is assigned.
 ```
+
+The offline controls come from the original routines at words `0x0552..0x0561`
+and `0x026D..0x0286`. CPU I/O reset clears auxiliary setup latches, and each
+auxiliary DOAC initialization can restart its setup sequence when returning
+from offline save. Unrecognized auxiliary operations still stop.
 
 Preservation/model boundary:
 Disk contents are loaded read-only. Guest writes replace 256-byte blocks in a

@@ -1,14 +1,14 @@
 #[derive(Debug, Clone, Copy)]
 enum DiskCompletion {
     Idle,
-    Control { end: Option<u16> },
+    Control { end: Option<u16>, status: u16 },
     Transfer { end: u16 },
 }
 impl DiskCompletion {
     fn end(self) -> Option<u16> {
         match self {
             Self::Idle => None,
-            Self::Control { end } => end,
+            Self::Control { end, .. } => end,
             Self::Transfer { end } => Some(end),
         }
     }
@@ -80,10 +80,13 @@ impl Disk {
         self.completion = DiskCompletion::Idle;
     }
     fn transfer(&mut self, memory: &mut Memory, extended: bool) -> Result<IoResult, Fault> {
-        if extended && self.a == Some(0x2000) && self.c == Some(0x2000) {
+        let diagnostic = self.a == Some(0x2800) && self.b == Some(0x1400) && self.c == Some(0);
+        let control = self.a == Some(0x2000) && matches!(self.c, Some(0x2000 | 0x0c00));
+        if extended && (control || diagnostic) {
             self.controls += 1;
             self.completion = DiskCompletion::Control {
                 end: self.completion.end(),
+                status: if diagnostic { 0x100 } else { 0 },
             };
             self.busy = false;
             self.done = true;
@@ -110,7 +113,12 @@ impl Disk {
         let c = self
             .c
             .ok_or_else(|| Fault::new(crate::FaultKind::DiskRegisterUninitialized))?;
-        if a & !0x103f != 0 {
+        let allowed = if extended && a & 0x3000 == 0x3000 {
+            0x303f
+        } else {
+            0x103f
+        };
+        if a & !allowed != 0 {
             return Err(Fault::with(
                 crate::FaultKind::UnsupportedDiskCommand,
                 crate::FaultContext::DiskCommand { command: a },
@@ -213,11 +221,15 @@ impl Disk {
                 return self.transfer(memory, extended);
             }
             (1, 0 | 2) => {
+                let status = match self.completion {
+                    DiskCompletion::Control { status, .. } => status,
+                    _ => 0,
+                };
                 if p == 2 {
                     self.busy = false;
                     self.done = false;
                 }
-                r.value = Some(0);
+                r.value = Some(status);
             }
             _ => {
                 return Err(Fault::with(
@@ -281,8 +293,19 @@ impl Bus {
     pub fn extended(&self) -> bool {
         self.extended
     }
+    fn reset_io(&mut self) {
+        self.disk.reset();
+        if let Some(tape) = &mut self.tape {
+            tape.reset();
+        }
+        self.aux40.clear();
+        self.aux41.clear();
+        self.setup53 = 0;
+        self.probe53 = None;
+    }
     pub fn pending(&self) -> Option<u8> {
-        if self.disk.done && self.mask & 0x2000 == 0 {
+        let disk_mask = if self.extended { 0x0040 } else { 0x2000 };
+        if self.disk.done && self.mask & disk_mask == 0 {
             Some(0o33)
         } else if self.terminal.pending_events() > 0 && self.mask & 0x8000 == 0 {
             Some(0o50)
@@ -349,10 +372,7 @@ impl Bus {
             0o77 => {
                 if !self.extended {
                     if (op, p) == (5, 2) {
-                        self.disk.reset();
-                        if let Some(tape) = &mut self.tape {
-                            tape.reset();
-                        }
+                        self.reset_io();
                         r.value = Some(v);
                     } else {
                         return Err(Fault::with(
@@ -383,10 +403,7 @@ impl Bus {
                     } else if op == 4 {
                         self.mask = v;
                     } else if op == 5 {
-                        self.disk.reset();
-                        if let Some(tape) = &mut self.tape {
-                            tape.reset();
-                        }
+                        self.reset_io();
                         self.enabled = false;
                         self.mask = 0;
                         r.value = Some(v);
@@ -453,6 +470,9 @@ impl Bus {
                 } else {
                     &mut self.aux41
                 };
+                if (op, p, v) == (2, 2, if num == 0o40 { 0x3237 } else { 1 }) {
+                    values.clear();
+                }
                 let valid = if num == 0o41 {
                     values.is_empty() && (op, p, v) == (2, 2, 1)
                 } else {
@@ -502,6 +522,68 @@ impl Bus {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn cpu_io_reset_allows_auxiliary_setup_again() {
+        let mut cpu = crate::cpu::Cpu::new(16, true).unwrap();
+        let mut bus = Bus::new(vec![0; 6144], true, false, None);
+        for _ in 0..2 {
+            bus.io(&mut cpu.memory, 0o41, 2, 2, 1).unwrap();
+            bus.io(&mut cpu.memory, 0o40, 2, 2, 0x3237).unwrap();
+            bus.io(&mut cpu.memory, 0o40, 4, 2, 0x400).unwrap();
+            bus.io(&mut cpu.memory, 0o40, 6, 1, 0xffff).unwrap();
+            bus.io(&mut cpu.memory, 0o77, 5, 2, 0).unwrap();
+        }
+    }
+    #[test]
+    fn auxiliary_clear_pulse_restarts_its_setup_sequence() {
+        let mut cpu = crate::cpu::Cpu::new(16, true).unwrap();
+        let mut bus = Bus::new(vec![0; 6144], true, false, None);
+        for _ in 0..2 {
+            bus.io(&mut cpu.memory, 0o41, 2, 2, 1).unwrap();
+            bus.io(&mut cpu.memory, 0o40, 2, 2, 0x3237).unwrap();
+            bus.io(&mut cpu.memory, 0o40, 4, 2, 0x400).unwrap();
+            bus.io(&mut cpu.memory, 0o40, 6, 1, 0xffff).unwrap();
+        }
+    }
+    #[test]
+    fn offline_disk_controls_compound_write_and_mask_follow_driver() {
+        let mut cpu = crate::cpu::Cpu::new(16, true).unwrap();
+        let mut disk = Disk::new(vec![0; 6144]);
+        disk.io(&mut cpu.memory, true, 2, 0, 0x2800).unwrap();
+        disk.io(&mut cpu.memory, true, 4, 0, 0x1400).unwrap();
+        disk.io(&mut cpu.memory, true, 6, 1, 0).unwrap();
+        assert_eq!(
+            disk.io(&mut cpu.memory, true, 1, 2, 0).unwrap().value,
+            Some(0x100)
+        );
+        assert_eq!((disk.reads, disk.writes), (0, 0));
+        disk.io(&mut cpu.memory, true, 2, 0, 0x2000).unwrap();
+        disk.io(&mut cpu.memory, true, 6, 1, 0x0c00).unwrap();
+        disk.io(&mut cpu.memory, true, 0, 3, 0).unwrap();
+        assert!(disk.io(&mut cpu.memory, true, 7, 1, 0).unwrap().skip);
+        assert_eq!(
+            disk.io(&mut cpu.memory, true, 1, 2, 0).unwrap().value,
+            Some(0)
+        );
+        for i in 0..128 {
+            cpu.memory.write(300 + i, i as u16).unwrap();
+        }
+        disk.io(&mut cpu.memory, true, 2, 0, 0x3001).unwrap();
+        disk.io(&mut cpu.memory, true, 4, 0, 300).unwrap();
+        disk.io(&mut cpu.memory, true, 6, 1, 0).unwrap();
+        assert_eq!(disk.writes, 1);
+        assert_eq!(disk.overlay.get(&256).unwrap()[254..], [0, 127]);
+        let mut bus = Bus::new(vec![0; 6144], true, false, None);
+        bus.disk.done = true;
+        bus.mask = 0xffbf;
+        assert_eq!(bus.pending(), Some(0o33));
+        bus.mask = 0xffff;
+        assert_eq!(bus.pending(), None);
+        bus.mask = 0x0040;
+        assert_eq!(bus.pending(), None);
+        bus.mask = 0x2000;
+        assert_eq!(bus.pending(), Some(0o33));
+    }
     #[test]
     fn overlay_round_trip_never_changes_backing_image() {
         let mut cpu = crate::cpu::Cpu::new(16, true).unwrap();

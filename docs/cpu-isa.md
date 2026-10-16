@@ -308,7 +308,8 @@ completion: the original interrupt handler acknowledges the peripheral.
 
 On IRQ recognition: M[0]=interrupted PC; PC=M[1]; disable IRQs; preserve AC0..3
 and carry. Original code saves/restores them in software. Current priority is
- disk 0o33, then terminal 0o50; disable mask bits are 0x2000 and 0x8000 respectively.
+ disk 0o33, then terminal 0o50; extended disable mask bits are 0x0040 and 0x8000
+respectively (the loader compatibility model retains disk bit 0x2000).
 This wiring is inferred from ROCC startup, not copied from a DG device map.
 The emulator executes the first handler instruction in the same step as IRQ
 entry. The report keeps a bounded instruction tail; it is not a full IRQ trace.

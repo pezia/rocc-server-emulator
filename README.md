@@ -119,6 +119,58 @@ the overlay or patch guest memory. Other HALTs still stop execution. The sequenc
 is specific to the recovered WMS loader; other guest loaders are not covered.
 Batch runs must also select `--profile extended` explicitly.
 
+### Virtual tape backup and restore
+
+Mount a new writable reel before starting WMS:
+
+```sh
+./target/release/rocc-emulator boot original.img --interactive \
+  --tape-create backup.tap
+```
+
+After guest authentication, run the original `DSAVE` procedure through Procedure
+Control, or use System Functions → System Save → Tape Unit 1. Follow the guest
+confirmation prompts; the recovered full-disk confirmation accepts raw `93`
+(host F1). Allow the guest to finish and return to its menu before exiting.
+Interactive mode has no default instruction limit; a full save can exceed the
+batch limit of 100 million instructions.
+
+`--tape-create` requires a new filename. `--tape existing.tap` mounts an existing
+reel read-only for guest reads. Both options require the extended profile and
+configure only Tape Unit 1. Each launch mounts at beginning of tape; RAM snapshots
+do not preserve a tape operation or position. New writable reels append records;
+rewriting an earlier record is unsupported. Choose a new filename for each backup.
+
+Files use the standard SIMH `.tap` record/tape-mark subset, bounded to 512 MiB,
+100,000 objects and `0xFFFFFF` bytes per container record. The recovered WMS
+controller transfers at most 4096 words per record. Bad-record flags, extended
+objects, erase-gap objects and malformed framing are rejected. Complete records
+and marks are synced before guest completion. A stopped or interrupted save may
+be incomplete even when its framing parses correctly.
+
+The recovered full-system load can be exercised with the assisted operator IPL
+example. It clears emulator RAM, reads the saved bootstrap and first RAM page
+through tape DMA, and enters the original WMS load routine. This is specific to
+the recovered WMS layout, not a general physical boot-ROM implementation.
+Use a **blank destination base image of the original disk's size** and a new
+overlay, keeping the original disk session separate:
+
+```sh
+truncate -s "$(stat -c %s original.img)" restored.img
+cargo run --release --locked --example wms_tape_restore -- \
+  restored.img backup.tap restored.overlay restore-report.json
+./target/release/rocc-emulator boot restored.img --overlay restored.overlay \
+  --interactive --cold-boot
+```
+
+The example requires an all-zero base and a new overlay, opens the tape read-only,
+and does not load or save retained RAM. Its optional report contains private disk
+contents. It runs a bounded instruction budget and reports where the native
+loader stopped; verify the restored data before treating a reel as recoverable.
+The JSON `tape` report includes record/mark counts, position, I/O totals,
+initial/final SHA-256 and bounded controller events without record payloads.
+See [controller evidence and acceptance](docs/tape-controller.md).
+
 Reports record `configuration.cold_boot`, `cold_boot_completed`, and the final
 `front_panel_switches` value. A fresh overlay may boot without entering recovery,
 in which case `cold_boot_completed` remains false.
