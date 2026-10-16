@@ -405,11 +405,12 @@ class CliTests(unittest.TestCase):
         for sig in (signal.SIGINT,signal.SIGTERM,signal.SIGHUP):
             with self.subTest(signal=sig), tempfile.TemporaryDirectory() as tmp:
                 image=Path(tmp)/'disk';image.write_bytes(bytes(6144));report=Path(tmp)/'report'
+                tape=Path(tmp)/'mounted.tap';tape.write_bytes(bytes(4))
                 master,slave=pty.openpty();p=None
                 try:
                     fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,80,0,0))
                     original=termios.tcgetattr(slave)
-                    p=subprocess.Popen([BINARY,image,'--interactive','--report',report],stdin=slave,stdout=slave,stderr=slave)
+                    p=subprocess.Popen([BINARY,image,'--interactive','--tape',tape,'--report',report],stdin=slave,stdout=slave,stderr=slave)
                     out=bytearray();deadline=time.monotonic()+5
                     while b'Booting guest' not in out and time.monotonic()<deadline:
                         if select.select([master],[],[],.05)[0]:out.extend(os.read(master,65536))
@@ -420,6 +421,8 @@ class CliTests(unittest.TestCase):
                     self.assertEqual(p.poll(),128+sig)
                     self.assertEqual(termios.tcgetattr(slave),original)
                     self.assertEqual(json.loads(report.read_text())['interactive']['signal'],sig)
+                    self.assertEqual(json.loads(report.read_text())['tape']['final_sha256'],hashlib.sha256(bytes(4)).hexdigest())
+                    self.assertEqual(tape.read_bytes(),bytes(4))
                     self.assertTrue(json.loads(report.read_text())['memory_persistence']['committed'])
                     self.assertEqual(Path(str(image)+'.overlay.ram').read_bytes()[10],0)
                 finally:
@@ -531,5 +534,44 @@ class CliTests(unittest.TestCase):
             p=run([BINARY,'compact-overlay',image,'--overlay',source,'--output',dest],capture_output=True,preexec_fn=limit_writes)
             self.assertNotEqual(p.returncode,0);self.assertFalse(dest.exists());self.assertEqual(source.read_bytes(),before);self.assertEqual(image.read_bytes(),original)
             self.assertFalse(list(Path(tmp).glob('.rocc-artifact-*')))
+
+class TapeCliTests(unittest.TestCase):
+    def boot(self,image,*args):
+        return run([BINARY,'boot',image,'--profile','extended','--steps','20',*args],capture_output=True,text=True)
+    def test_native_cpu_writes_durable_tape_record(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            image=Path(tmp)/'disk';raw=bytearray(6144)
+            words={0:0x2064,1:0x6210,2:0x2065,3:0x6410,4:0x2066,5:0x6650,6:0x663f,100:0x28,101:110,102:0x7ffe,110:0x1234,111:0xabcd}
+            for a,w in words.items():raw[a*2:a*2+2]=w.to_bytes(2,'big')
+            image.write_bytes(raw);tape=Path(tmp)/'new.tap';report=Path(tmp)/'report'
+            p=self.boot(image,'--tape-create',tape,'--report',report)
+            self.assertEqual(p.returncode,0,p.stderr)
+            self.assertEqual(tape.read_bytes(),bytes.fromhex('040000001234abcd04000000'))
+            self.assertEqual(tape.stat().st_mode&0o777,0o600)
+            t=json.loads(report.read_text())['tape'];self.assertEqual((t['records'],t['marks'],t['writes'],t['position']),(1,0,1,1))
+            self.assertEqual(t['final_sha256'],hashlib.sha256(tape.read_bytes()).hexdigest())
+            self.assertEqual(image.read_bytes(),bytes(raw))
+    def test_invalid_mount_preserves_existing_ram(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            image=Path(tmp)/'disk';image.write_bytes(retaining_image());self.assertEqual(self.boot(image).returncode,0)
+            overlay=Path(str(image)+'.overlay');ram=Path(str(overlay)+'.ram');saved=ram.read_bytes();tape=Path(tmp)/'tape';tape.write_bytes(bytes.fromhex('0300000061'))
+            for args in [('--tape',tape),('--tape',Path(tmp)/'missing'),('--tape-create',tape),('--tape-create',image),('--tape',overlay),('--tape',ram),('--tape-create',Path(tmp)/'new','--report',Path(tmp)/'new'),('--tape',tape,'--tape-create',Path(tmp)/'new'),('--tape',tape,'--tape',tape)]:
+                with self.subTest(args=args):
+                    p=self.boot(image,*args);self.assertNotEqual(p.returncode,0);self.assertEqual(ram.read_bytes(),saved)
+            self.assertFalse((Path(tmp)/'new').exists())
+    def test_aliases_and_loader_profile_cannot_mount(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            image=Path(tmp)/'disk';image.write_bytes(retaining_image());alias=Path(tmp)/'alias';os.link(image,alias)
+            for mount in [image,alias]:
+                p=self.boot(image,'--tape',mount,'--no-memory');self.assertNotEqual(p.returncode,0)
+            link=Path(tmp)/'link';link.symlink_to(image);self.assertNotEqual(self.boot(image,'--tape',link).returncode,0)
+            tape=Path(tmp)/'new';p=run([BINARY,'boot',image,'--tape-create',tape],capture_output=True,text=True)
+            self.assertNotEqual(p.returncode,0);self.assertFalse(tape.exists())
+    def test_readonly_tape_identity_and_bot_on_restart(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            image=Path(tmp)/'disk';image.write_bytes(retaining_image());tape=Path(tmp)/'tape';raw=bytes(4);tape.write_bytes(raw)
+            for n in range(2):
+                report=Path(tmp)/f'report{n}';p=self.boot(image,'--tape',tape,'--report',report)
+                self.assertEqual(p.returncode,0,p.stderr);t=json.loads(report.read_text())['tape'];self.assertEqual(t['mode'],'read_only');self.assertEqual(t['position'],0);self.assertEqual(tape.read_bytes(),raw)
 
 if __name__=='__main__':unittest.main()

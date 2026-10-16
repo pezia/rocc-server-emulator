@@ -124,6 +124,49 @@ impl Machine {
         self.reload_bootstrap();
         Ok(())
     }
+    /// Mount one reel before retaining RAM or executing the bootstrap.
+    pub fn attach_tape(
+        &mut self,
+        mount: crate::tape::TapeMount,
+        image_path: &Path,
+        overlay_path: &Path,
+        report_path: Option<&Path>,
+    ) -> Result<(), String> {
+        if !self.config.extended()
+            || self.steps != 0
+            || self.memory_session.is_some()
+            || self.bus.tape.is_some()
+        {
+            return Err("tape requires extended profile and one attachment before RAM activation or execution".into());
+        }
+        let overlay = std::fs::canonicalize(overlay_path).map_err(|e| e.to_string())?;
+        let actual = FileIdentity::from(&std::fs::metadata(&overlay).map_err(|e| e.to_string())?);
+        if actual != self.bus.disk.overlay_identity()? {
+            return Err("tape protection requires the attached disk overlay path".into());
+        }
+        let mut ram = overlay.clone().into_os_string();
+        ram.push(".ram");
+        let protected = crate::tape::TapeProtectedPaths {
+            image: image_path.to_owned(),
+            overlay,
+            ram: ram.into(),
+            report: report_path.map(Path::to_owned),
+        };
+        self.bus.tape = Some(crate::tape::open_controller(&mount, &protected)?);
+        Ok(())
+    }
+    pub fn finish_tape(&mut self) -> Result<(), String> {
+        if let Some(tape) = &mut self.bus.tape {
+            tape.finish()?;
+        }
+        Ok(())
+    }
+    pub fn tape_status(&self) -> Option<&crate::tape::TapeStatus> {
+        self.bus
+            .tape
+            .as_ref()
+            .map(crate::tape::TapeController::status)
+    }
     fn reload_bootstrap(&mut self) {
         let boot = self
             .bus
@@ -227,6 +270,9 @@ impl Machine {
     pub fn execute_step(cpu: &mut Cpu, bus: &mut Bus) -> Result<crate::cpu::StepInfo, Fault> {
         cpu.last_instruction = None;
         if bus.extended() {
+            if let Some(tape) = &mut bus.tape {
+                tape.tick(&mut cpu.memory)?;
+            }
             bus.terminal.tick()?;
             if bus.delay > 0 {
                 bus.delay -= 1;
