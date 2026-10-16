@@ -25,8 +25,17 @@ fn main() {
             for a in 0..1024 {
                 cpu.memory.write(a, 0x4141).unwrap();
             }
-            let mut terminal = Terminal::new(true, None);
-            terminal.capture_tail = true;
+            use rocc_emulator::config::*;
+            let config = MachineConfig::new(
+                CpuProfile::Extended,
+                16,
+                TerminalProfile::Experimental,
+                None,
+                ResourceLimits::default(),
+                CaptureMode::Tail,
+            )
+            .unwrap();
+            let mut terminal = Terminal::with_config(&config);
             for _ in 0..514 {
                 terminal.io(&cpu.memory, 2, 0, 0).unwrap();
                 terminal.io(&cpu.memory, 4, 0, 0).unwrap();

@@ -79,7 +79,7 @@ never overwritten.
 Reports are created privately (`0600`, restricted further by the umask), streamed
 to a temporary file, synced, and published without overwriting another file.
 Report schema 2 records effective configuration, build revision, scheduled input,
-initial/final overlay identities, and separate full-stream/retained-output hashes.
+initial/final overlay identities, and separate full-stream/retained-output hashes and total/retained packet counts.
 Interactive delivered-key history retains 65536 entries; `replay_complete` records
 whether earlier entries were discarded. Reports are diagnostics, not checkpoints.
 Runs without `--report` skip detailed report construction and memory hashing.

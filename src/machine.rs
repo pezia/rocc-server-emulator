@@ -137,6 +137,14 @@ impl Machine {
         }
         cpu.execute(bus)
     }
+    pub fn send_key(&mut self, byte: u8) -> Result<(), Fault> {
+        if let Err(fault) = self.bus.terminal.send_key(byte) {
+            self.reason = Some(fault.reason().into());
+            self.fault = Some(fault.clone());
+            return Err(fault);
+        }
+        Ok(())
+    }
     pub fn step(&mut self) {
         if self.reason.is_some() {
             return;

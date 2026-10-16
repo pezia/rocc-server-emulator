@@ -3,7 +3,7 @@ import fcntl,hashlib,json,os,pty,resource,select,signal,struct,subprocess,tempfi
 from pathlib import Path
 
 ROOT=Path(__file__).resolve().parents[1]
-BINARY=ROOT/'target/release/rocc-emulator'
+BINARY=Path(os.environ.get('ROCC_TEST_BINARY',ROOT/'target/release/rocc-emulator')).resolve()
 
 def run(*args,**kwargs):
     kwargs.setdefault('timeout',15)
@@ -315,5 +315,73 @@ class CliTests(unittest.TestCase):
             source=Path(str(image)+'.overlay');raw=bytearray(source.read_bytes());raw[-1]^=1;source.write_bytes(raw);dest=Path(tmp)/'new'
             p=run([BINARY,'compact-overlay',image,'--overlay',source,'--output',dest],capture_output=True,timeout=15)
             self.assertNotEqual(p.returncode,0);self.assertFalse(dest.exists());self.assertEqual(source.read_bytes(),raw)
+
+    def test_scheduled_key_queue_fault_still_publishes_report(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            image=Path(tmp)/'disk';raw=bytearray(6144);raw[254:256]=(127).to_bytes(2,'big');image.write_bytes(raw);report=Path(tmp)/'report'
+            p=run([BINARY,image,'--profile','extended','--terminal','experimental','--steps','3','--connect-after','1','--event-limit','1','--key-at','1:41','--report',report],capture_output=True,text=True)
+            self.assertNotEqual(p.returncode,0);self.assertTrue(report.exists(),p.stderr)
+            data=json.loads(report.read_text());self.assertEqual(data['reason'],'terminal_event_limit');self.assertEqual(data['steps'],1)
+
+    def test_signal_with_full_output_queue_exits_without_summary_block(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            image=Path(tmp)/'disk';image.write_bytes(bytes(6144));report=Path(tmp)/'report'
+            master,slave=pty.openpty();p=None;original=termios.tcgetattr(slave)
+            try:
+                fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',25,65535,0,0))
+                p=subprocess.Popen([BINARY,image,'--interactive','--report',report],stdin=slave,stdout=slave,stderr=slave)
+                deadline=time.monotonic()+5
+                while termios.tcgetattr(slave)==original and p.poll() is None and time.monotonic()<deadline:time.sleep(.01)
+                self.assertNotEqual(termios.tcgetattr(slave),original)
+                time.sleep(.1);p.send_signal(signal.SIGTERM)
+                self.assertEqual(p.wait(timeout=3),143)
+                self.assertEqual(termios.tcgetattr(slave),original);self.assertTrue(report.exists())
+            finally:
+                if p is not None and p.poll() is None:p.kill();p.wait(timeout=5)
+                termios.tcsetattr(slave,termios.TCSANOW,original);os.close(master);os.close(slave)
+
+    def test_interactive_key_queue_fault_retains_outcome_and_report(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            image=Path(tmp)/'disk';raw=bytearray(6144)
+            for address,word in {127:0,0:0x2064,1:0x6228,2:0x6428,3:0x2065,4:0x6628,5:5,100:0,101:65}.items():raw[2*address:2*address+2]=word.to_bytes(2,'big')
+            image.write_bytes(raw);report=Path(tmp)/'report';master,slave=pty.openpty();p=None;original=termios.tcgetattr(slave)
+            try:
+                fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',24,80,0,0))
+                p=subprocess.Popen([BINARY,image,'--interactive','--connect-after','1','--event-limit','2','--report',report],stdin=slave,stdout=slave,stderr=slave)
+                out=bytearray();deadline=time.monotonic()+5
+                while b'\x1b[1;1HA' not in out and p.poll() is None and time.monotonic()<deadline:
+                    if select.select([master],[],[],.05)[0]:out.extend(os.read(master,65536))
+                self.assertIn(b'\x1b[1;1HA',out);os.write(master,b'B')
+                while p.poll() is None and time.monotonic()<deadline:
+                    if select.select([master],[],[],.05)[0]:out.extend(os.read(master,65536))
+                self.assertEqual(p.poll(),1,repr(out[-500:]));data=json.loads(report.read_text())
+                self.assertEqual(data['reason'],'terminal_event_limit');self.assertEqual(data['interactive']['keys_pending'],1)
+                self.assertEqual(data['interactive']['keys_delivered'],0);self.assertEqual(data['interactive']['delivered_keys'],[])
+                self.assertEqual(termios.tcgetattr(slave),original)
+            finally:
+                if p is not None and p.poll() is None:p.kill();p.wait(timeout=5)
+                termios.tcsetattr(slave,termios.TCSANOW,original);os.close(master);os.close(slave)
+
+    def test_invalid_limits_leave_runtime_artifacts_absent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            image=Path(tmp)/'disk';image.write_bytes(bytes(6144));report=Path(tmp)/'report'
+            for option,value in [('--event-limit','0'),('--event-limit','65537'),('--capture-bytes','67108865'),('--packet-limit','65537')]:
+                p=run([BINARY,image,option,value,'--report',report],capture_output=True,text=True)
+                self.assertNotEqual(p.returncode,0);self.assertIn('invalid resource limits',p.stderr)
+                self.assertFalse(report.exists());self.assertFalse(Path(str(image)+'.overlay').exists())
+
+    def test_compaction_wrong_base_and_failed_publication_preserve_sources(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            image=Path(tmp)/'disk';original=writing_image();image.write_bytes(original);self.assertEqual(self.boot(image).returncode,0)
+            source=Path(str(image)+'.overlay');before=source.read_bytes();dest=Path(tmp)/'new'
+            changed=bytearray(original);changed[-1]^=1;image.write_bytes(changed)
+            p=run([BINARY,'compact-overlay',image,'--overlay',source,'--output',dest],capture_output=True)
+            self.assertNotEqual(p.returncode,0);self.assertFalse(dest.exists());self.assertEqual(source.read_bytes(),before);self.assertEqual(image.read_bytes(),changed)
+            image.write_bytes(original)
+            def limit_writes():
+                resource.setrlimit(resource.RLIMIT_FSIZE,(100,100));signal.signal(signal.SIGXFSZ,signal.SIG_IGN)
+            p=run([BINARY,'compact-overlay',image,'--overlay',source,'--output',dest],capture_output=True,preexec_fn=limit_writes)
+            self.assertNotEqual(p.returncode,0);self.assertFalse(dest.exists());self.assertEqual(source.read_bytes(),before);self.assertEqual(image.read_bytes(),original)
+            self.assertFalse(list(Path(tmp).glob('.rocc-artifact-*')))
 
 if __name__=='__main__':unittest.main()

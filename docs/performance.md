@@ -22,11 +22,11 @@ A representative run on Linux x86_64/glibc 2.43, Rust 1.96.1, release profile:
 
 | Probe | Before | After | Peak RSS before / after |
 | --- | --- | --- | --- |
-| 10 million simple JMP instructions | 0.13549 s | 0.14951 s | 2228 / 2456 KiB |
-| 10,000 one-byte outputs after 1 MiB history fills | 0.13785 s | 0.000607 s | 8884 / 4756 KiB |
-| Export 10,000 changed disk blocks | 0.02748 s | 0.00634 s | 32052 / 5668 KiB |
+| 10 million simple JMP instructions | 0.13549 s | 0.16043 s | 2228 / 2220 KiB |
+| 10,000 one-byte outputs after 1 MiB history fills | 0.13785 s | 0.000619 s | 8884 / 4816 KiB |
+| Export 10,000 changed disk blocks | 0.02748 s | 0.00600 s | 32052 / 5868 KiB |
 
-The simple instruction loop is about 10% slower in this sample with checked memory
+The simple instruction loop is about 18% slower in this sample with checked memory
 mapping. Output retention avoids shifting a full MiB per byte; typed diagnostics
 also avoid JSON allocations during successful controller operations. Streaming
 report export avoids constructing all changed blocks and packets as a JSON tree.
@@ -41,8 +41,8 @@ and explicit old JSON report serialization). The initial preflight loop measured
 0.13893 s for 10 million instructions, consistent with that reconstructed baseline.
 
 A 20,000-record overlay touching eight blocks shrank from 5,920,048 to 2,416 bytes.
-One-step boot wall time fell from 0.01917 s to 0.00176 s. Compaction itself took
-0.01891 s. These short durations include process startup and filesystem cache
+One-step boot wall time fell from 0.01915 s to 0.00152 s. Compaction itself took
+0.01776 s. These short durations include process startup and filesystem cache
 noise. The original journal and base image were preserved.
 
 Do not add machine-specific performance assertions to the correctness suite.

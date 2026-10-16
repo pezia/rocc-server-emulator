@@ -72,7 +72,8 @@ pub struct Terminal {
     packet_history_truncated: bool,
     full_digest: Sha256,
     pub screen: Screen,
-    pub capture_tail: bool,
+    capture_tail: bool,
+    total_packets: u64,
     pub total_display_bytes: u64,
     pub connected: bool,
     pub connect_after: Option<u64>,
@@ -103,6 +104,7 @@ impl Terminal {
             full_digest: Sha256::new(),
             screen: Screen::new(),
             capture_tail: false,
+            total_packets: 0,
             total_display_bytes: 0,
             connected: false,
             connect_after,
@@ -154,6 +156,13 @@ impl Terminal {
         t.packet_limit = limits.packets();
         t.capture_tail = config.capture() == CaptureMode::Tail;
         t
+    }
+    pub fn capture_mode(&self) -> CaptureMode {
+        if self.capture_tail {
+            CaptureMode::Tail
+        } else {
+            CaptureMode::Stop
+        }
     }
     pub fn pending_events(&self) -> usize {
         self.events.len()
@@ -257,6 +266,7 @@ impl Terminal {
         self.capture_truncated = self.byte_history_truncated || self.packet_history_truncated;
         self.full_digest.update(raw);
         self.total_display_bytes += raw.len() as u64;
+        self.total_packets += 1;
         self.screen.feed(raw);
         self.packets.push_back(DisplayPacket {
             start,
@@ -287,7 +297,7 @@ impl Terminal {
         if value & 0xf800 != 0xe000 || value & 0x7ff == 0 {
             return Err(Fault::with(
                 crate::FaultKind::UnsupportedTerminalDmaMode,
-                json!({"value":value}),
+                crate::FaultContext::Parameter { value },
             ));
         }
         let count = (value & 0x7ff) as usize;
@@ -316,7 +326,12 @@ impl Terminal {
         pulse: u8,
         value: u16,
     ) -> Result<IoResult, Fault> {
-        let details = || json!({"operation":operation,"pulse":pulse,"value":value});
+        let details = || crate::FaultContext::Protocol {
+            operation,
+            pulse,
+            value: Some(value),
+            device: None,
+        };
         let needs_ack = match (operation, pulse) {
             (2, 0) => {
                 value == 0xe000 || value == 0xf001 || value == 0xe804 || value & 0xfc0f == 0xc001
@@ -411,7 +426,10 @@ impl Terminal {
             if !known {
                 return Err(Fault::with(
                     crate::FaultKind::UnsupportedTerminalCommand,
-                    json!({"command":value}),
+                    crate::FaultContext::Command {
+                        command: Some(value),
+                        value: None,
+                    },
                 ));
             }
             self.clear_dma();
@@ -452,7 +470,10 @@ impl Terminal {
             } else {
                 return Err(Fault::with(
                     crate::FaultKind::UnsupportedTerminalParameter,
-                    json!({"command":self.command(),"value":value}),
+                    crate::FaultContext::Command {
+                        command: self.command(),
+                        value: Some(value),
+                    },
                 ));
             }
             self.output("C", value);
@@ -484,6 +505,9 @@ impl serde::Serialize for DisplayExport<'_> {
         let t = self.0;
         let mut m = s.serialize_map(None)?;
         m.serialize_entry("packets", &t.packets)?;
+        m.serialize_entry("total_packets", &t.total_packets)?;
+        m.serialize_entry("retained_packets", &t.packets.len())?;
+        m.serialize_entry("retained_bytes", &t.display_bytes.len())?;
         m.serialize_entry("screen", &t.screen.snapshot())?;
         m.serialize_entry("capture_truncated", &t.capture_truncated)?;
         m.serialize_entry("byte_history_truncated", &t.byte_history_truncated)?;

@@ -85,79 +85,104 @@ pub struct Fault {
 }
 impl Fault {
     pub fn new(kind: FaultKind) -> Self {
-        Self::with(kind, serde_json::json!({}))
+        Self::with(kind, FaultContext::Empty {})
     }
-    pub fn with(kind: FaultKind, details: Value) -> Self {
+    pub fn with(kind: FaultKind, context: FaultContext) -> Self {
         Self {
             kind,
-            context: Box::new(serde_json::from_value(details).expect("typed fault context")),
+            context: Box::new(context),
         }
-    }
-    pub fn details(&self) -> Value {
-        serde_json::to_value(&self.context).expect("fault serialization")
     }
     pub fn reason(&self) -> &'static str {
         self.kind.reason()
     }
+    pub fn details(&self) -> Value {
+        serde_json::to_value(&self.context).expect("typed context serialization")
+    }
 }
-
-#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
-#[serde(deny_unknown_fields)]
-struct FaultContext {
-    #[serde(default, skip_serializing_if = "Option::is_none", rename = "address")]
-    address: Option<usize>,
-    #[serde(default, skip_serializing_if = "Option::is_none", rename = "selector")]
-    selector: Option<u16>,
-    #[serde(default, skip_serializing_if = "Option::is_none", rename = "limit")]
-    limit: Option<usize>,
-    #[serde(default, skip_serializing_if = "Option::is_none", rename = "source")]
-    source: Option<usize>,
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        rename = "destination"
-    )]
-    destination: Option<usize>,
-    #[serde(default, skip_serializing_if = "Option::is_none", rename = "words")]
-    words: Option<usize>,
-    #[serde(default, skip_serializing_if = "Option::is_none", rename = "bank")]
-    bank: Option<usize>,
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        rename = "physical_word"
-    )]
-    physical_word: Option<usize>,
-    #[serde(default, skip_serializing_if = "Option::is_none", rename = "low")]
-    low: Option<u16>,
-    #[serde(default, skip_serializing_if = "Option::is_none", rename = "high")]
-    high: Option<u16>,
-    #[serde(default, skip_serializing_if = "Option::is_none", rename = "device")]
-    device: Option<u8>,
-    #[serde(default, skip_serializing_if = "Option::is_none", rename = "offset")]
-    offset: Option<usize>,
-    #[serde(default, skip_serializing_if = "Option::is_none", rename = "head")]
-    head: Option<usize>,
-    #[serde(default, skip_serializing_if = "Option::is_none", rename = "RAM_word")]
-    ram_word: Option<usize>,
-    #[serde(default, skip_serializing_if = "Option::is_none", rename = "A")]
-    a: Option<u16>,
-    #[serde(default, skip_serializing_if = "Option::is_none", rename = "error")]
-    error: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none", rename = "operation")]
-    operation: Option<u8>,
-    #[serde(default, skip_serializing_if = "Option::is_none", rename = "pulse")]
-    pulse: Option<u8>,
-    #[serde(default, skip_serializing_if = "Option::is_none", rename = "value")]
-    value: Option<u16>,
-    #[serde(default, skip_serializing_if = "Option::is_none", rename = "command")]
-    command: Option<u16>,
-    #[serde(default, skip_serializing_if = "Option::is_none", rename = "mapping")]
-    mapping: Option<MemoryMapping>,
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(untagged)]
+pub enum FaultContext {
+    Empty {},
+    Address {
+        address: usize,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        selector: Option<u16>,
+    },
+    Memory {
+        address: usize,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        mapping: Option<MemoryMapping>,
+    },
+    CopySource {
+        address: usize,
+        bank: usize,
+        physical_word: usize,
+    },
+    Indirect {
+        address: usize,
+        limit: usize,
+    },
+    BlockMove {
+        source: usize,
+        destination: usize,
+        words: usize,
+    },
+    Bank {
+        bank: usize,
+    },
+    Selector {
+        selector: u16,
+    },
+    Descriptor {
+        low: u16,
+        high: u16,
+    },
+    Device {
+        device: u8,
+    },
+    DiskCommand {
+        #[serde(rename = "A")]
+        command: u16,
+    },
+    DiskAddress {
+        offset: usize,
+        head: usize,
+    },
+    Dma {
+        #[serde(rename = "RAM_word")]
+        address: usize,
+    },
+    Persistence {
+        offset: usize,
+        error: String,
+    },
+    Protocol {
+        operation: u8,
+        pulse: u8,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        value: Option<u16>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        device: Option<u8>,
+    },
+    Parameter {
+        value: u16,
+    },
+    Command {
+        command: Option<u16>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        value: Option<u16>,
+    },
 }
-#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
-struct MemoryMapping {
-    region: String,
-    bank: Option<usize>,
-    physical_word: usize,
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct MemoryMapping {
+    pub region: MemoryRegion,
+    pub bank: Option<usize>,
+    pub physical_word: usize,
+}
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MemoryRegion {
+    Global,
+    Local,
 }

@@ -1,5 +1,4 @@
 use crate::{devices::Bus, memory::Memory, Fault};
-use serde_json::json;
 #[derive(Debug)]
 pub struct Cpu {
     pub memory: Memory,
@@ -85,7 +84,10 @@ impl Cpu {
             }
             return Err(Fault::with(
                 crate::FaultKind::IndirectLimit,
-                json!({"address":address,"limit":256}),
+                crate::FaultContext::Indirect {
+                    address: address as usize,
+                    limit: 256,
+                },
             ));
         }
         Ok(address)
@@ -99,7 +101,11 @@ impl Cpu {
         {
             return Err(Fault::with(
                 crate::FaultKind::BlockMoveBounds,
-                json!({"source":source,"destination":destination,"words":count}),
+                crate::FaultContext::BlockMove {
+                    source,
+                    destination,
+                    words: count,
+                },
             ));
         }
         if extended && count > 0 {
@@ -115,7 +121,7 @@ impl Cpu {
             if bank >= self.memory.banks() {
                 return Err(Fault::with(
                     crate::FaultKind::UnsupportedMoveSourceBank,
-                    json!({"bank":bank}),
+                    crate::FaultContext::Bank { bank },
                 ));
             }
         }
@@ -134,7 +140,11 @@ impl Cpu {
                 None => self.memory.physical_get(physical).ok_or_else(|| {
                     Fault::with(
                         crate::FaultKind::UninitializedMemory,
-                        json!({"address":address,"bank":bank,"physical_word":physical}),
+                        crate::FaultContext::CopySource {
+                            address,
+                            bank,
+                            physical_word: physical,
+                        },
                     )
                 })?,
             };
@@ -160,7 +170,7 @@ impl Cpu {
         if high & !1 != 0 {
             return Err(Fault::with(
                 crate::FaultKind::UnsupportedByteDescriptor,
-                json!({"low":low,"high":high}),
+                crate::FaultContext::Descriptor { low, high },
             ));
         }
         let pointer = low as usize | ((high as usize) << 16);
@@ -289,7 +299,7 @@ impl Cpu {
                 self.ac[accumulator] = result.value.ok_or_else(|| {
                     Fault::with(
                         crate::FaultKind::MissingDeviceInput,
-                        json!({"device":number}),
+                        crate::FaultContext::Device { device: number },
                     )
                 })?;
             }

@@ -202,11 +202,11 @@
 
 **Interfaces:** `cargo run --release --example performance -- CASE ITERATIONS` supports `instructions`, `terminal-tail`, and `report`; Python driver runs those and overlay replay/compaction scenarios using temporary synthetic images and records environment, throughput, elapsed time and peak RSS where available. No correctness test has machine-specific timing thresholds.
 
-- [ ] Before modifying source during execution, capture baseline release throughput/output/report/replay measurements from the pre-implementation commit in an isolated temporary checkout; preserve command/environment/result data for final comparison. The original unbounded-event reproduction must remain a bounded-size probe.
-- [ ] Implement probes using stable public APIs after Tasks 1–8. Measure steady-state one-byte output after filling history, large changed-block report export, and equivalent overlay replay before/after compaction; distinguish I/O sync cost from instruction throughput.
-- [ ] Update docs for exact flags/defaults/ceilings, overflow policies, signal statuses/limits, report schema/digests/replay completeness, compaction usage and source preservation, checked Rust APIs, one execution clock, generation provenance, and CI commands. Replace old claims about unbounded packets or only normal-exit cleanup.
-- [ ] Run final `cargo fmt --check`, `cargo clippy --all-targets --locked -- -D warnings`, `cargo test --locked`, release build, both Python harnesses, generator `--check`, MSRV checks, performance probes, and `git diff --check`. Review each spec acceptance item against concrete test or measurement output. Obtain an independent whole-change review when the chosen execution method authorizes it; fix demonstrated defects and rerun affected checks.
-- [ ] Commit with `docs: document hardened emulator contracts and performance`; report exact passing counts, remaining environment limitations, benchmark results, and all public compatibility changes. Do not merge or push unless separately authorized.
+- [x] Before modifying source during execution, capture baseline release throughput/output/report/replay measurements from the pre-implementation commit in an isolated temporary checkout; preserve command/environment/result data for final comparison. The original unbounded-event reproduction must remain a bounded-size probe.
+- [x] Implement probes using stable public APIs after Tasks 1–8. Measure steady-state one-byte output after filling history, large changed-block report export, and equivalent overlay replay before/after compaction; distinguish I/O sync cost from instruction throughput.
+- [x] Update docs for exact flags/defaults/ceilings, overflow policies, signal statuses/limits, report schema/digests/replay completeness, compaction usage and source preservation, checked Rust APIs, one execution clock, generation provenance, and CI commands. Replace old claims about unbounded packets or only normal-exit cleanup.
+- [x] Run final `cargo fmt --check`, `cargo clippy --all-targets --locked -- -D warnings`, `cargo test --locked`, release build, both Python harnesses, generator `--check`, MSRV checks, performance probes, and `git diff --check`. Review each spec acceptance item against concrete test or measurement output. Obtain an independent whole-change review when the chosen execution method authorizes it; fix demonstrated defects and rerun affected checks.
+- [x] Commit with `docs: document hardened emulator contracts and performance`; report exact passing counts, remaining environment limitations, benchmark results, and all public compatibility changes. Do not merge or push unless separately authorized.
 
 ## Execution handoff and self-review
 
@@ -221,3 +221,26 @@ terminal state, and reporting share interfaces across most tasks. One implemente
 can preserve those contracts with less handoff overhead. Subagent-driven execution
 is available if the user prefers per-task independent review. Wait for the user to
 review this written plan and choose the execution method before implementation.
+
+
+## Execution result
+
+Completed natively on branch `emulator-hardening`. A fresh independent reviewer
+identified three important issues and two smaller omissions. All five were fixed:
+blocked post-session output, missing reports on host-key queue faults, arbitrary
+JSON fault construction/null diagnostics, missing total packet counts, and an
+interactive capture-policy mismatch. Reproductions were observed failing before
+fixes; the complete suites were then rerun. Final evidence is recorded below.
+
+- 69 Rust tests pass on stable and Rust 1.87.
+- 28 CLI/PTY/persistence tests pass; 8262 frozen and 610 independent CPU cases pass.
+- Five independent-model hand checks and generator reproducibility pass.
+- Formatting and Clippy with warnings denied pass; performance probes run.
+- GitHub Actions is configured but has not been run remotely.
+
+Decisions and limits: sandbox-inaccessible managed worktree prompted the branch
+fallback in the original checkout; Cpu::step remains a compatibility forwarding
+method; remaining baseline measurements used an archived pre-change revision.
+The review's two smaller omissions were included in the user's request for all
+findings. Hardware fidelity, actual power-cut behavior, and remote CI execution
+remain outside the evidence established by local synthetic checks.

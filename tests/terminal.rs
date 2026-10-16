@@ -118,3 +118,14 @@ fn timer_pending_flag_tracks_every_clear_operation() {
         assert_eq!(t.next_event(), Some([0x6000, 0, 0]));
     }
 }
+#[test]
+fn capture_reports_total_and_retained_packet_counts() {
+    let (mut t, m) = setup(2, 4, 2, CaptureMode::Tail, None);
+    for b in b"ABCDEF" {
+        output(&mut t, &m, *b as u16);
+    }
+    let d = t.display_report();
+    assert_eq!(d["total_packets"], 6);
+    assert_eq!(d["retained_packets"], 2);
+    assert_eq!(d["retained_bytes"], 4);
+}

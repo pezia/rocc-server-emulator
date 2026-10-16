@@ -282,6 +282,7 @@ In interactive mode the controller retains a bounded capture tail instead of
 stopping at the batch capture limit; screen state continues updating. Both modes
 bound bytes and packet count independently: defaults are 1 MiB and 4096 packets.
 `--capture-bytes` accepts 1..67108864 and `--packet-limit` accepts 1..65536.
+Total/retained packet and retained-byte counts are exported explicitly.
 Byte history uses a ring buffer; packets are compact typed records serialized only
 on export. Separate truncation flags identify which history was evicted.
 
@@ -451,7 +452,12 @@ enable, interrupt entry, and instruction execution; both normal execution and CP
 fixtures use it. `Cpu::step` remains a forwarding compatibility method. A faulting
 step still advances the instruction clock once; resource faults before fetch do
 not execute an instruction. Disk completion and terminal readiness are typed
-states; faults have a closed `FaultKind` with stable external reason strings.
+states; faults have a closed `FaultKind` and typed `FaultContext` variants with
+stable external reason strings. `Fault::with` accepts a typed context rather than
+arbitrary JSON; optional command values preserve explicit null diagnostics.
+Library callers entering `interactive::run` must select Tail capture in validated
+configuration. Incompatible capture policies are rejected before changing the
+host terminal; the runtime cannot silently change the reported capture policy.
 
 `Machine::summary` borrows the final screen and lightweight counters, with no
 memory hashing or disk encoding. `write_report` streams borrowed report sections;

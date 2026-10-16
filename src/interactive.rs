@@ -499,6 +499,18 @@ fn write_output_inner(mut bytes: &[u8], cleanup: bool) -> Result<(), String> {
     }
     Ok(())
 }
+/// Best-effort final host output, preserving flags and avoiding a blocked PTY.
+pub fn write_final_output(bytes: &[u8]) -> Result<(), String> {
+    let flags = unsafe { libc::fcntl(1, libc::F_GETFL) };
+    if flags < 0 || unsafe { libc::fcntl(1, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+        return Err(io::Error::last_os_error().to_string());
+    }
+    let result = write_output_inner(bytes, true);
+    unsafe {
+        libc::fcntl(1, libc::F_SETFL, flags);
+    }
+    result
+}
 fn size() -> Result<(usize, usize), String> {
     let mut ws: libc::winsize = unsafe { std::mem::zeroed() };
     if unsafe { libc::ioctl(1, libc::TIOCGWINSZ, &mut ws) } < 0 {
@@ -638,9 +650,15 @@ pub fn run(
     limit: Option<u64>,
     bindings: BTreeMap<String, u8>,
 ) -> Result<InteractiveOutcome, String> {
+    if !machine.config().extended()
+        || !machine.config().experimental()
+        || machine.config().capture() != crate::config::CaptureMode::Tail
+        || machine.bus.terminal.capture_mode() != crate::config::CaptureMode::Tail
+    {
+        return Err("interactive requires extended experimental terminal with tail capture".into());
+    }
     let signals = crate::signals::SignalSession::enter().map_err(|e| e.to_string())?;
     let _session = RawSession::enter()?;
-    machine.bus.terminal.capture_tail = true;
     let start = Instant::now();
     let mut k = Keyboard::new();
     k.bindings = bindings;
@@ -734,12 +752,11 @@ pub fn run(
             && machine.bus.terminal.connected
             && machine.steps >= k.next_step
         {
-            if let Some(key) = k.pending.pop_front() {
-                machine
-                    .bus
-                    .terminal
-                    .send_key(key)
-                    .map_err(|f| f.reason().to_string())?;
+            if let Some(key) = k.pending.front().copied() {
+                if machine.send_key(key).is_err() {
+                    break;
+                }
+                k.pending.pop_front();
                 history.record(machine.steps, key);
                 k.delivered += 1;
                 k.next_step = machine.steps.saturating_add(2000);

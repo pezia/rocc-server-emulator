@@ -9,7 +9,7 @@ pub mod terminal;
 
 pub mod config;
 mod fault;
-pub use fault::{Fault, FaultKind};
+pub use fault::{Fault, FaultContext, FaultKind, MemoryMapping, MemoryRegion};
 
 #[derive(Default, Debug)]
 pub struct IoResult {

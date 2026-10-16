@@ -20,7 +20,16 @@ fn main() {
             }
         }
         Err(e) => {
-            eprintln!("rocc-emulator: {e}");
+            let message = format!("rocc-emulator: {e}\n");
+            // stderr may share a full PTY with stdout after interactive cleanup.
+            let flags = unsafe { libc::fcntl(2, libc::F_GETFL) };
+            if flags >= 0 && unsafe { libc::fcntl(2, libc::F_SETFL, flags | libc::O_NONBLOCK) } == 0
+            {
+                unsafe {
+                    libc::write(2, message.as_ptr().cast(), message.len());
+                    libc::fcntl(2, libc::F_SETFL, flags);
+                }
+            }
             std::process::exit(1);
         }
     }
@@ -271,10 +280,9 @@ fn run() -> Result<i32, String> {
         let mut key_index = 0;
         while m.steps < steps.unwrap() && m.reason.is_none() {
             while key_index < keys.len() && keys[key_index].0 == m.steps {
-                m.bus
-                    .terminal
-                    .send_key(keys[key_index].1)
-                    .map_err(|f| f.reason().to_string())?;
+                if m.send_key(keys[key_index].1).is_err() {
+                    break;
+                }
                 key_index += 1;
             }
             m.step();
@@ -283,6 +291,7 @@ fn run() -> Result<i32, String> {
     };
     let elapsed = started.elapsed().as_secs_f64();
     let signal = interactive_report.as_ref().and_then(|r| r.signal);
+    let mut final_output = String::new();
     if let Some(dest) = destination {
         let metadata = rocc_emulator::report::RunMetadata {
             input: Some(fs::canonicalize(&image).map_err(|e| e.to_string())?),
@@ -299,22 +308,27 @@ fn run() -> Result<i32, String> {
             rocc_emulator::report::write_report(file, &m, &metadata)
         })
         .map_err(|e| e.to_string())?;
-        println!("Report: {}", dest.display());
+        final_output.push_str(&format!("Report: {}\n", dest.display()));
+    }
+    if let Some(signal) = signal {
+        return Ok(128 + signal);
     }
     let summary = m.summary();
-    println!(
-        "ROCC Rust: {} at RAM word {} after {} instructions ({elapsed:.3}s)",
+    final_output.push_str(&format!(
+        "ROCC Rust: {} at RAM word {} after {} instructions ({elapsed:.3}s)\n",
         summary.reason, summary.pc, summary.steps
-    );
-    println!(
-        "Disk: {} reads, {} writes to persistent overlay ({} blocks). Original image unchanged.",
-        summary.disk_reads, summary.disk_writes, summary.overlay_blocks
-    );
-    println!("Overlay: {}", overlay.display());
+    ));
+    final_output.push_str(&format!("Disk: {} reads, {} writes to persistent overlay ({} blocks). Original image unchanged.\nOverlay: {}\n",summary.disk_reads,summary.disk_writes,summary.overlay_blocks,overlay.display()));
     if m.bus.terminal.total_display_bytes > 0 {
         for row in &summary.screen.cells {
-            println!("{}", String::from_utf8_lossy(row).trim_end());
+            final_output.push_str(String::from_utf8_lossy(row).trim_end());
+            final_output.push('\n');
         }
+    }
+    if interactive {
+        let _ = rocc_emulator::interactive::write_final_output(final_output.as_bytes());
+    } else {
+        print!("{final_output}");
     }
     if m.fault.is_some() {
         return Err(format!("guest stopped: {}", m.reason.unwrap()));

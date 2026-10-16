@@ -92,7 +92,10 @@ impl Disk {
         {
             return Err(Fault::with(
                 crate::FaultKind::UnmappedMemoryBank,
-                json!({"address":self.b}),
+                crate::FaultContext::Address {
+                    address: self.b.unwrap_or_default() as usize,
+                    selector: None,
+                },
             ));
         }
         let a = self
@@ -104,7 +107,7 @@ impl Disk {
         if a & !0x103f != 0 {
             return Err(Fault::with(
                 crate::FaultKind::UnsupportedDiskCommand,
-                json!({"A":a}),
+                crate::FaultContext::DiskCommand { command: a },
             ));
         }
         let b = self
@@ -116,13 +119,13 @@ impl Disk {
         if head >= 20 || offset + 256 > self.base.len() {
             return Err(Fault::with(
                 crate::FaultKind::DiskAddressBounds,
-                json!({"offset":offset,"head":head}),
+                crate::FaultContext::DiskAddress { offset, head },
             ));
         }
         if b + 128 > memory.logical_words() {
             return Err(Fault::with(
                 crate::FaultKind::DiskDmaBounds,
-                json!({"RAM_word":b}),
+                crate::FaultContext::Dma { address: b },
             ));
         }
         if a & 0x1000 != 0 {
@@ -134,7 +137,7 @@ impl Disk {
                 journal.write_block(offset, &raw).map_err(|error| {
                     Fault::with(
                         crate::FaultKind::DiskOverlayWrite,
-                        json!({"offset":offset,"error":error}),
+                        crate::FaultContext::Persistence { offset, error },
                     )
                 })?;
             }
@@ -212,7 +215,12 @@ impl Disk {
             _ => {
                 return Err(Fault::with(
                     crate::FaultKind::UnsupportedDiskOperation,
-                    json!({"operation":op,"pulse":p}),
+                    crate::FaultContext::Protocol {
+                        operation: op,
+                        pulse: p,
+                        value: None,
+                        device: None,
+                    },
                 ))
             }
         }
@@ -288,7 +296,12 @@ impl Bus {
                 if !self.extended && (op, p) != (2, 3) {
                     return Err(Fault::with(
                         crate::FaultKind::UnsupportedSetupOperation,
-                        json!({"operation":op,"pulse":p,"value":v}),
+                        crate::FaultContext::Protocol {
+                            operation: op,
+                            pulse: p,
+                            value: Some(v),
+                            device: None,
+                        },
                     ));
                 }
                 return self.terminal.io(memory, op, p, v);
@@ -312,7 +325,12 @@ impl Bus {
                         } else {
                             crate::FaultKind::UnsupportedSetupOperation
                         },
-                        json!({"operation":op,"pulse":p,"value":v}),
+                        crate::FaultContext::Protocol {
+                            operation: op,
+                            pulse: p,
+                            value: Some(v),
+                            device: None,
+                        },
                     ));
                 }
             }
@@ -324,7 +342,12 @@ impl Bus {
                     } else {
                         return Err(Fault::with(
                             crate::FaultKind::UnsupportedIo,
-                            json!({"device":num,"operation":op,"pulse":p}),
+                            crate::FaultContext::Protocol {
+                                operation: op,
+                                pulse: p,
+                                value: None,
+                                device: Some(num),
+                            },
                         ));
                     }
                 } else {
@@ -365,7 +388,7 @@ impl Bus {
                         if (v >> 8) as usize >= memory.banks() {
                             return Err(Fault::with(
                                 crate::FaultKind::UnsupportedMemoryBank,
-                                json!({"selector":v}),
+                                crate::FaultContext::Selector { selector: v },
                             ));
                         }
                         memory.set_mapping(crate::memory::Mapping::SelectedBank((v >> 8) as u8))?;
@@ -380,7 +403,12 @@ impl Bus {
                 } else {
                     return Err(Fault::with(
                         crate::FaultKind::UnsupportedBankOperation,
-                        json!({"operation":op,"pulse":p}),
+                        crate::FaultContext::Protocol {
+                            operation: op,
+                            pulse: p,
+                            value: None,
+                            device: None,
+                        },
                     ));
                 }
             }
@@ -431,7 +459,12 @@ impl Bus {
             _ => {
                 return Err(Fault::with(
                     crate::FaultKind::UnsupportedIo,
-                    json!({"device":num,"operation":op,"pulse":p}),
+                    crate::FaultContext::Protocol {
+                        operation: op,
+                        pulse: p,
+                        value: None,
+                        device: Some(num),
+                    },
                 ))
             }
         }
